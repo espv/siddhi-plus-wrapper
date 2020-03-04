@@ -1,0 +1,45 @@
+Manifest-Version: 1.0
+Main-Class: 
+Class-Path: gson-2.8.5.jar bcpkix-jdk15on-1.54.jar maven-shared-utils-3.
+ 2.1.jar accessors-smart-1.2.jar maven-artifact-3.6.0.jar org.eclipse.si
+ su.inject-0.3.3.jar classindex-3.6.jar lzma-java-1.3.jar scala-parser-c
+ ombinators_2.11-1.0.4.jar jsr305-1.3.9.jar slf4j-api-1.7.21.jar error_p
+ rone_annotations-2.0.18.jar guava-23.0.jar jopt-simple-4.9.jar j2objc-a
+ nnotations-1.1.jar netty-tcnative-2.0.25.Final-linux-x86_64.jar org.ecl
+ ipse.osgi.services-3.3.100.v20130513-1956.jar maven-resolver-impl-1.3.1
+ .jar joda-time-2.7.jar asm-5.0.4.jar freemarker-gae-2.3.28.jar testng-6
+ .14.3.jar guice-4.2.1-no_aop.jar metrics-core-3.1.0.jar aopalliance-1.0
+ .jar log4j-1.2.17.jar javassist-3.18.1-GA.jar mvel2-2.4.4.Final.jar cur
+ ator-test-2.7.1.jar mockito-core-2.18.3.jar byte-buddy-1.8.5.jar jline-
+ 0.9.94.jar commons-lang3-3.8.1.jar junit-4.10.jar commons-math-2.2.jar 
+ rxtx-2.1.7.jar zkclient-0.8.jar maven-model-3.6.0.jar maven-settings-3.
+ 6.0.jar slf4j-simple-1.7.12.jar hamcrest-core-1.1.jar cdi-api-1.0.jar s
+ cala-library-2.11.8.jar logback-classic-1.1.7.jar maven-core-3.6.0.jar 
+ json-20180813.jar maven-repository-metadata-3.6.0.jar json-path-2.4.0.j
+ ar log4j-api-2.6.2.jar protobuf-javanano-3.0.0-alpha-5.jar plexus-ciphe
+ r-1.4.jar jackson-datatype-joda-2.9.8.jar snakeyaml-1.24.jar junit-4.12
+ .jar jctools-core-2.1.1.jar stax2-api-4.0.0.jar org.osgi.core-6.0.0.jar
+  javax.activation-1.2.0.jar lz4-1.3.0.jar netty-3.2.2.Final.jar quartz-
+ 2.1.1.jar hamcrest-core-1.3.jar msf4j-all-2.1.1.jar Agrona-0.5.1.jar aa
+ lto-xml-1.0.0.jar maven-builder-support-3.6.0.jar metrics-core-2.2.0.ja
+ r jzlib-1.1.3.jar jackson-annotations-2.9.0.jar plexus-component-annota
+ tions-1.7.1.jar maven-resolver-util-1.3.1.jar protobuf-java-2.6.1.jar s
+ iddhi-map-binary-2.0.0.jar plexus-utils-3.1.0.jar slf4j-log4j12-1.7.12.
+ jar jsoup-1.11.3.jar jboss-marshalling-2.0.5.Final.jar conscrypt-openjd
+ k-uber-1.3.0.jar antlr4-runtime-4.7.2.jar barchart-udt-bundle-2.3.0.jar
+  xz-1.5.jar hamcrest-library-1.3.jar kafka_2.11-0.10.0.0.jar javassist-
+ 3.20.0-GA.jar snappy-java-1.1.2.4.jar jcommander-1.72.jar c3p0-0.9.1.1.
+ jar maven-settings-builder-3.6.0.jar jmh-core-1.21.jar logback-core-1.1
+ .7.jar jackson-databind-2.9.8.jar maven-plugin-annotations-3.6.0.jar by
+ te-buddy-agent-1.8.5.jar jopt-simple-4.6.jar disruptor-3.4.2.wso2v1.jar
+  jsr250-api-1.0.jar kafka-clients-0.10.0.0.jar json-smart-2.3.jar compr
+ ess-lzf-1.0.3.jar org.apache.felix.configadmin-1.9.14.jar commons-loggi
+ ng-1.2.jar javax.inject-1.jar maven-resolver-provider-3.6.0.jar maven-p
+ lugin-api-3.6.0.jar org.eclipse.sisu.plexus-0.3.3.jar maven-resolver-ap
+ i-1.3.1.jar plexus-interpolation-1.25.jar plexus-sec-dispatcher-1.4.jar
+  objenesis-2.6.jar plexus-classworlds-2.5.2.jar servlet-api-2.5.jar bcp
+ rov-jdk15on-1.54.jar maven-model-builder-3.6.0.jar commons-math3-3.2.ja
+ r animal-sniffer-annotations-1.14.jar bsh-2.0b6.jar slf4j-api-1.7.12.ja
+ r maven-resolver-spi-1.3.1.jar jackson-core-2.9.8.jar log4j-1.2.17.wso2
+ v1.jar zookeeper-3.4.0.jar commons-io-1.3.2.jar quartz-2.1.1.wso2v1.jar
+

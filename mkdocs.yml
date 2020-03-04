@@ -1,0 +1,70 @@
+site_name: Siddhi
+site_description: Cloud Native Stream Processor
+site_author: WSO2
+site_url: http://siddhi.io
+extra_css:
+- stylesheets/extra.css
+repo_name: Siddhi
+repo_url: https://github.com/siddhi-io/siddhi
+copyright: Copyright &copy; 2011 - 2019 WSO2
+theme:
+  name: material
+  logo: images/siddhi-logo-w.svg
+  favicon: images/favicon.ico
+  palette:
+    primary: teal
+    accent: teal
+extra:
+  social:
+  - type: github
+    link: https://github.com/siddhi-io/siddhi
+  - type: linkedin
+    link: https://www.linkedin.com/groups/13553064
+google_analytics:
+- UA-103065-28
+- auto
+markdown_extensions:
+- admonition
+- toc:
+    permalink: true
+- codehilite:
+    guess_lang: false
+- pymdownx.tasklist:
+      custom_checkbox: true
+- markdown.extensions.attr_list:
+pages:
+- Welcome to Siddhi: index.md
+- Features: features.md
+- Quick Start Guide: documentation/siddhi-5.x/quckstart-5.x.md
+- Download: download.md
+- Documentation:
+  - Siddhi 5.x:
+    - Quick Start Guide: documentation/siddhi-5.x/quckstart-5.x.md
+    - User Guide: documentation/siddhi-5.x/user-guide-5.x.md
+    - Siddhi Query Guide: documentation/siddhi-5.x/query-guide-5.x.md
+    - Siddhi Architecture: documentation/siddhi-5.x/architecture-5.x.md
+  - Siddhi 4.x:
+    - Quick Start Guide: documentation/siddhi-4.x/quckstart-4.x.md
+    - User Guide: documentation/siddhi-4.x/user-guide-4.x.md
+    - Siddhi Query Guide: documentation/siddhi-4.x/query-guide-4.x.md
+    - Siddhi Architecture: documentation/siddhi-4.x/architecture-4.x.md
+- Contribute: contribution.md
+- Extensions: extensions.md
+- API Docs:
+  - 5.0.0: api/5.0.0.md
+  - 4.4.8: api/4.4.8.md
+  - 4.4.0: api/4.4.0.md
+  - 4.3.19: api/4.3.19.md
+  - 4.3.0: api/4.3.0.md
+  - 4.2.40: api/4.2.40.md
+  - 4.2.20: api/4.2.20.md
+  - 4.2.0: api/4.2.0.md
+  - 4.1.64: api/4.1.64.md
+  - 4.1.46: api/4.1.46.md
+  - 4.1.7: api/4.1.7.md
+  - 4.1.0: api/4.1.0.md
+  - 4.0.9: api/4.0.9.md
+  - 4.0.0: api/4.0.0.md
+  - latest: api/latest.md
+- License: license.md
+- Google Season of Code 2019: season-of-docs-2019.md
