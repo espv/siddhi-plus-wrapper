@@ -49,6 +49,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     SiddhiManager siddhiManager = new SiddhiManager();
     StringBuilder queries = new StringBuilder();
     Map<Integer, Map<String, Object>> allSchemas = new HashMap<>();
+    Map<Integer, String> siddhiSchemas = new HashMap<>();
     Map<Integer, List<Integer>> schemaToNodeIds = new HashMap<>();
     int port;
     private String trace_output_folder;
@@ -360,34 +361,51 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             String stream_name = (String) schema.get("name");
             int stream_id = (int) schema.get("stream-id");
             streamNameToId.put(stream_name, stream_id);
+            // Create own schema based in the loop below instead of using "siddhi-specific" schema.
             allSchemas.put(stream_id, schema);
 
+            StringBuilder siddhi_schema = new StringBuilder("define stream " + stream_name + " (");
             StreamDefinition streamDefinition = StreamDefinition.id(stream_name);
             for (Map<String, Object> j : (ArrayList<Map<String, Object>>) schema.get("tuple-format")) {
+                siddhi_schema.append(j.get("name"));
+                siddhi_schema.append(" ");
                 Attribute.Type type;
                 if (j.get("type").equals("string")) {
                     type = Attribute.Type.STRING;
+                    siddhi_schema.append("string, ");
                 } else if (j.get("type").equals("bool")) {
                     type = Attribute.Type.BOOL;
+                    siddhi_schema.append("bool, ");
                 } else if (j.get("type").equals("int")) {
                     type = Attribute.Type.INT;
+                    siddhi_schema.append("int, ");
                 } else if (j.get("type").equals("float")) {
                     type = Attribute.Type.DOUBLE;
+                    siddhi_schema.append("double, ");
                 } else if (j.get("type").equals("double")) {
                     type = Attribute.Type.DOUBLE;
+                    siddhi_schema.append("double, ");
                 } else if (j.get("type").equals("long")) {
                     type = Attribute.Type.LONG;
+                    siddhi_schema.append("long, ");
                 } else if (j.get("type").equals("number")) {
-                    type = Attribute.Type.FLOAT;
+                    type = Attribute.Type.DOUBLE;
+                    siddhi_schema.append("double, ");
                 } else if (j.get("type").equals("timestamp")) {
                     type = Attribute.Type.STRING;
+                    siddhi_schema.append("string, ");
                 } else if (j.get("type").equals("long-timestamp")) {
                     type = Attribute.Type.LONG;
+                    siddhi_schema.append("long, ");
                 } else {
                     throw new RuntimeException("Invalid attribute type in stream schema");
                 }
                 streamDefinition = streamDefinition.attribute((String) j.get("name"), type);
             }
+            // We remove the final comma and space
+            siddhi_schema.setLength(siddhi_schema.length()-2);
+            siddhi_schema.append(");\n");
+            siddhiSchemas.put(stream_id, siddhi_schema.toString());
 
             Attribute.Type[] streamTypes = EventDefinitionConverterUtil.generateAttributeTypeArray(
                     streamDefinition.getAttributeList());
@@ -456,10 +474,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
     private void StartSiddhiAppRuntime() {
         StringBuilder schemasString = new StringBuilder();
-        for (Map<String, Object> s : allSchemas.values()) {
-            if (s.containsKey("siddhi")) {
-                schemasString.append(s.get("siddhi")).append("\n");
-            }
+        for (String siddhiSchema : siddhiSchemas.values()) {
+            schemasString.append(siddhiSchema);
         }
         siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + queries.toString());
         for (Tuple2<String, StreamCallback> t : allCallbacks) {
