@@ -161,8 +161,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
             Attribute.Type[] streamType = (Attribute.Type[]) schema.get("stream-type");
             int cnt = 0;
+            String dataset_path = System.getenv().get("EXPOSE_PATH") + "/" + ds.get("file");
             try {
-                BufferedReader csvReader = new BufferedReader(new FileReader((String) ds.get("file")));
+                BufferedReader csvReader = new BufferedReader(new FileReader(dataset_path));
 
                 String row;
                 while ((row = csvReader.readLine()) != null) {
@@ -294,7 +295,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             FileInputStream fis = null;
             Yaml yaml = new Yaml();
             try {
-                fis = new FileInputStream(((String)ds.get("file")).replaceFirst("^~", System.getProperty("user.home")));
+                String dataset_path = System.getenv().get("EXPOSE_PATH") + "/" + ds.get("file");
+                fis = new FileInputStream(dataset_path);
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
             }
