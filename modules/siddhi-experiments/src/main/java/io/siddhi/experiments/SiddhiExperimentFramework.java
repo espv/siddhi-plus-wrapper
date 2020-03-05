@@ -71,14 +71,14 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     public void SetTraceOutputFolder(String f) {this.trace_output_folder = f;}
 
     @Override
-    public String RunEnvironment() {
+    public String StartRuntimeEnv() {
         timeLastRecvdTuple = 0;
         StartSiddhiAppRuntime();
         return "Success";
     }
 
     @Override
-    public String StopEnvironment() {
+    public String StopRuntimeEnv() {
         siddhiAppRuntime.shutdown();
         tf.writeTraceToFile(this.trace_output_folder, this.getClass().getSimpleName());
         return "Success";
@@ -208,7 +208,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String ProcessDataset(Map<String, Object> ds) {
+    public String SendDsAsStream(Map<String, Object> ds) {
         int stream_id = (int) ds.get("stream-id");
         Map<String, Object> schema = allSchemas.get(stream_id);
         List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
@@ -307,7 +307,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String AddSubscriberOfStream(int streamId, int nodeId) {
+    public String AddNextHop(int streamId, int nodeId) {
         if (!schemaToNodeIds.containsKey(streamId)) {
             schemaToNodeIds.put(streamId, new ArrayList<>());
         }
@@ -316,7 +316,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String SetNodeIdToAddress(Map<Integer, Map<String, Object>> newNodeIdToIpAndPort) {
+    public String SetNidToAddress(Map<Integer, Map<String, Object>> newNodeIdToIpAndPort) {
         nodeIdToIpAndPort = newNodeIdToIpAndPort;
         return "Success";
     }
@@ -356,7 +356,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     int cnt2 = 0;
     int cnt3 = 0;
     @Override
-    public String AddStreamSchemas(List<Map<String, Object>> schemas) {
+    public String AddSchemas(List<Map<String, Object>> schemas) {
         for (Map<String, Object> schema : schemas) {
             String stream_name = (String) schema.get("name");
             int stream_id = (int) schema.get("stream-id");
@@ -485,7 +485,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String AddQueries(Map<String, Object> json_query) {
+    public String DeployQueries(Map<String, Object> json_query) {
         String query = (String) ((Map<String, Object>) json_query.get("sql-query")).get("siddhi");
         int query_id = (int) json_query.get("id");
         //for (int i = 0; i < quantity; i++) {
@@ -541,13 +541,13 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String CleanupExperiment() {
+    public String EndExperiment() {
         tf.writeTraceToFile(this.trace_output_folder, this.getClass().getSimpleName());
         return "Success";
     }
 
     @Override
-    public String AddTracepointIds(List<Object> tracepointIds) {
+    public String AddTpIds(List<Object> tracepointIds) {
         for (int tracepointId : (List<Integer>) (List<?>) tracepointIds) {
             this.tf.addTracepoint(tracepointId);
         }
@@ -555,7 +555,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
-    public String NotifyAfterNoReceivedTuple(int milliseconds) {
+    public String RetEndOfStream(int milliseconds) {
         long time_diff = 0;
         do {
             try {
