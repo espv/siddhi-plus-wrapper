@@ -294,7 +294,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             FileInputStream fis = null;
             Yaml yaml = new Yaml();
             try {
-                fis = new FileInputStream((String) ds.get("file"));
+                fis = new FileInputStream(((String)ds.get("file")).replaceFirst("^~", System.getProperty("user.home")));
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
             }
