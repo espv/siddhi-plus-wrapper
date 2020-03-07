@@ -115,14 +115,17 @@ public class TCPNettyServer {
                 System.out.println("Tcp Server started in " + hostAndPort + "");
             } catch (InterruptedException e) {
                 e.printStackTrace();
+		System.exit(12);
             }
         } catch (Exception e) {
             e.printStackTrace();
+	    System.exit(13);
         } finally {
             try {
                 group.shutdownGracefully().sync();
             } catch (InterruptedException e) {
                 e.printStackTrace();
+		System.exit(14);
             }
         }
     }
