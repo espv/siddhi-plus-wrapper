@@ -120,6 +120,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             }
         } catch (IOException e) {
             e.printStackTrace();
+	    System.exit(14);
         }
         return "Success";
     }
@@ -196,6 +197,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 csvReader.close();
             } catch (IOException e) {
                 e.printStackTrace();
+		System.exit(15);
             }
         } else if (ds.get("type").equals("yaml")) {
             List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
@@ -299,6 +301,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 fis = new FileInputStream(dataset_path);
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
+		System.exit(16);
             }
             Map<String, Object> map = (Map<String, Object>) yaml.load(fis);
             tuples = (ArrayList<Map<String, Object>>) map.get("cepevents");
@@ -444,6 +447,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                         //ProcessTuple(stream_id, finalStreamDefinition.getId(), streamTypes, event);
                     } catch (InterruptedException ie) {
                         ie.printStackTrace();
+			System.exit(18);
                     }
                 }
             };
@@ -564,6 +568,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 Thread.sleep(milliseconds);
             } catch (InterruptedException e) {
                 e.printStackTrace();
+		System.exit(19);
             }
             time_diff = System.currentTimeMillis() - timeLastRecvdTuple;
         } while (time_diff < milliseconds || timeLastRecvdTuple == 0);
