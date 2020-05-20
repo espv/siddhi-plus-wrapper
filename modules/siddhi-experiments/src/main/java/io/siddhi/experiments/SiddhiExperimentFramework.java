@@ -18,6 +18,9 @@ import org.yaml.snakeyaml.Yaml;
 
 import java.io.*;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -51,6 +54,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     Map<Integer, Map<String, Object>> allSchemas = new HashMap<>();
     Map<Integer, String> siddhiSchemas = new HashMap<>();
     Map<Integer, List<Integer>> schemaToNodeIds = new HashMap<>();
+    Map<Integer, BufferedWriter> streamIdToCsvWriter = new HashMap<>();
     int port;
     private String trace_output_folder;
 
@@ -120,7 +124,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             }
         } catch (IOException e) {
             e.printStackTrace();
-	    System.exit(14);
         }
         return "Success";
     }
@@ -197,55 +200,105 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 csvReader.close();
             } catch (IOException e) {
                 e.printStackTrace();
-		System.exit(15);
             }
         } else if (ds.get("type").equals("yaml")) {
-            List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
+            /*List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
             for (Map<String, Object> tuple : tuples) {
                 AddTuples(tuple, 1);
-            }
+            }*/
         } else {
             throw new RuntimeException("Invalid dataset type for dataset with Id " + ds.get("id"));
         }
         return "Success";
     }
 
+    private Map<String, Object> GetMapFromYaml(Map<String, Object> ds) {
+        FileInputStream fis = null;
+        Yaml yaml = new Yaml();
+        String dataset_path = System.getenv().get("EXPOSE_PATH") + "/" + ds.get("file");
+        try {
+            fis = new FileInputStream(dataset_path);
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        }
+        return (Map<String, Object>) yaml.load(fis);
+    }
+
     @Override
     public String SendDsAsStream(Map<String, Object> ds) {
-        int stream_id = (int) ds.get("stream-id");
-        Map<String, Object> schema = allSchemas.get(stream_id);
-        List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
-        double prevTimestamp = 0;
-        long prevTime = System.nanoTime();
-        for (Map<String, Object> tuple : tuples) {
-            allPackets.clear();
-            AddTuples(tuple, 1);
-            if ((boolean) ds.getOrDefault("realism", false) && schema.containsKey("rowtime-column")) {
-                Map<String, Object> rowtime_column = (Map<String, Object>) schema.get("rowtime-column");
-                double timestamp = 0;
-                for (Map<String, Object> attribute : (List<Map<String, Object>>) tuple.get("attributes")) {
-                    if (attribute.get("name").equals(rowtime_column.get("column"))) {
-                        int nanoseconds_per_tick = (int) rowtime_column.get("nanoseconds-per-tick");
-                        timestamp = (double) attribute.get("value") * nanoseconds_per_tick;
-                        if (prevTimestamp == 0) {
-                            prevTimestamp = timestamp;
-                        }
-                        break;
-                    }
+        //System.out.println("Processing dataset");
+        int ds_id = (int) ds.get("id");
+        List<Map<String, Object>> tuples = datasetIdToTuples.get(ds_id);
+        if (tuples == null) {
+            Map<String, Object> map = GetMapFromYaml(ds);
+            List<Map<String, Object>> raw_tuples = (List<Map<String, Object>>) map.get("cepevents");
+            Map<Integer, List<Map<String, Object>>> ordered_tuples = new HashMap<>();
+            //int i = 0;
+            // Add order to tuples and place them in ordered_tuples
+            for (Map<String, Object> tuple : raw_tuples) {
+                //tuple.put("_order", i++);
+                int tuple_stream_id = (int) tuple.get("stream-id");
+                if (ordered_tuples.get(tuple_stream_id) == null) {
+                    ordered_tuples.put(tuple_stream_id, new ArrayList<>());
                 }
-                double time_diff_tuple = timestamp - prevTimestamp;
-                long time_diff_real = System.nanoTime() - prevTime;
-                while (time_diff_real < time_diff_tuple) {
-                    time_diff_real = System.nanoTime() - prevTime;
-                }
+                ordered_tuples.get(tuple_stream_id).add(tuple);
+            }
 
-                prevTimestamp = timestamp;
-                prevTime = System.nanoTime();
+            // Fix the type of the tuples in ordered_tuples
+            for (int stream_id : ordered_tuples.keySet()) {
+                Map<String, Object> schema = allSchemas.get(stream_id);
+                CastTuplesCorrectTypes(ordered_tuples.get(stream_id), schema);
             }
-            if (!allPackets.isEmpty()) {
-                ProcessTuples(1);
-            }
+
+            // Sort the raw_tuples by their order
+			/*raw_tuples.sort((lhs, rhs) -> {
+				int lhs_order = (int) lhs.get("_order");
+				int rhs_order = (int) rhs.get("_order");
+				return Integer.compare(lhs_order, rhs_order);
+			});*/
+
+            datasetIdToTuples.put(ds_id, raw_tuples);
+            tuples = raw_tuples;
         }
+		/*double prevTimestamp = 0;
+		//System.out.println("Ready to transmit tuples");
+		long prevTime = System.nanoTime();
+		boolean realism = (boolean) ds.getOrDefault("realism", false) && schema.containsKey("rowtime-column");
+		for (Map<String, Object> tuple : tuples) {
+			AddTuples(tuple, 1);
+
+			if (realism) {
+				Map<String, Object> rowtime_column = (Map<String, Object>) schema.get("rowtime-column");
+				double timestamp = 0;
+				for (Map<String, Object> attribute : (List<Map<String, Object>>) tuple.get("attributes")) {
+					if (attribute.get("name").equals(rowtime_column.get("column"))) {
+						int nanoseconds_per_tick = (int) rowtime_column.get("nanoseconds-per-tick");
+						timestamp = (double) attribute.get("value") * nanoseconds_per_tick;
+						if (prevTimestamp == 0) {
+							prevTimestamp = timestamp;
+						}
+						break;
+					}
+				}
+				double time_diff_tuple = timestamp - prevTimestamp;
+				long time_diff_real = System.nanoTime() - prevTime;
+				while (time_diff_real < time_diff_tuple) {
+					time_diff_real = System.nanoTime() - prevTime;
+				}
+
+				prevTimestamp = timestamp;
+				prevTime = System.nanoTime();
+			}
+		}
+
+		if (!realism) {
+			ProcessTuples(tuples.size());
+		}*/
+
+        for (Map<String, Object> tuple : tuples) {
+            AddTuples(tuple, 1);
+        }
+        ProcessTuples(tuples.size());
         return "Success";
     }
 
@@ -290,9 +343,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
         }
     }
 
-    private List<Map<String, Object>> readTuplesFromDataset(Map<String, Object> ds, Map<String, Object> schema) {
-        int stream_id = (int) ds.get("stream-id");
-        List<Map<String, Object>> tuples = datasetIdToTuples.get(stream_id);
+    /*private List<Map<String, Object>> readTuplesFromDataset(Map<String, Object> ds) {
+        int ds_id = (int) ds.get("id");
+        List<Map<String, Object>> tuples = datasetIdToTuples.get(ds_id);
         if (tuples == null) {
             FileInputStream fis = null;
             Yaml yaml = new Yaml();
@@ -301,7 +354,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 fis = new FileInputStream(dataset_path);
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
-		System.exit(16);
             }
             Map<String, Object> map = (Map<String, Object>) yaml.load(fis);
             tuples = (ArrayList<Map<String, Object>>) map.get("cepevents");
@@ -309,7 +361,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             datasetIdToTuples.put(stream_id, tuples);
         }
         return tuples;
-    }
+    }*/
 
     @Override
     public String AddNextHop(int streamId, int nodeId) {
@@ -317,6 +369,39 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             schemaToNodeIds.put(streamId, new ArrayList<>());
         }
         schemaToNodeIds.get(streamId).add(nodeId);
+        return "Success";
+    }
+
+    @Override
+    public String WriteStreamToCsv(int stream_id, String csv_folder) {
+        int cnt = 1;
+        boolean finished = false;
+        while (!finished) {
+            String path = csv_folder + "/siddhi/" + cnt;
+            Path p = Paths.get(path);
+            if (Files.exists(p)) {
+                ++cnt;
+                continue;
+            }
+            File f = new File(path);
+            if (!f.getParentFile().exists()) {
+                f.getParentFile().mkdirs();
+            }
+            try {
+                f.createNewFile();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            FileWriter fw = null;
+            try {
+                fw = new FileWriter(f);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            BufferedWriter bw = new BufferedWriter(fw);
+            streamIdToCsvWriter.put(stream_id, bw);
+            finished = true;
+        }
         return "Success";
     }
 
@@ -437,9 +522,17 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
                 public void onEvent(Event event) {
                     //LOG.info(event);
+                    BufferedWriter writer = streamIdToCsvWriter.get(stream_id);
+                    if (writer != null) {
+                        try {
+                            writer.write(event.toString() + "\n");
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                     timeLastRecvdTuple = System.currentTimeMillis();
-                    if (++cnt2 % 100000 == 0)
-                        System.out.println("Received event number " + cnt2 + ": " + event);
+                    //if (++cnt2 % 100000 == 0)
+                    System.out.println("Received event number " + (++cnt2) + ": " + event);
                     try {
                         tf.traceEvent(1, new Object[]{Thread.currentThread().getId(), Event.running_id + 1/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
                         siddhiAppRuntime.getInputHandler(finalStreamDefinition.getId()).send(event);
@@ -447,7 +540,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                         //ProcessTuple(stream_id, finalStreamDefinition.getId(), streamTypes, event);
                     } catch (InterruptedException ie) {
                         ie.printStackTrace();
-			System.exit(18);
                     }
                 }
             };
@@ -462,11 +554,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 public void receive(Event[] events) {
                     for (Event event : events) {
                         cnt3 += events.length;
-                        if (cnt3 % 100000 == 0)
-                            System.out.println("Produced complex event " + event.GetId());
                         eventCount++;
+                        if (cnt3 % 100000 == 0)
+                            System.out.println("Produced complex event " + event.GetId() + " to stream " + event.toString());
                         tf.traceEvent(6, new Object[]{Thread.currentThread().getId()});
-
                         ProcessTuple(stream_id, stream_name, streamTypes, event);
                     }
                 }
@@ -493,6 +584,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     @Override
     public String DeployQueries(Map<String, Object> json_query) {
         String query = (String) ((Map<String, Object>) json_query.get("sql-query")).get("siddhi");
+        if (query == null || query.equals("")) {
+            return "Empty query";
+        }
         int query_id = (int) json_query.get("id");
         //for (int i = 0; i < quantity; i++) {
         tf.traceEvent(221, new Object[]{query_id});
@@ -549,6 +643,13 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     @Override
     public String EndExperiment() {
         tf.writeTraceToFile(this.trace_output_folder, this.getClass().getSimpleName());
+        for (BufferedWriter w : streamIdToCsvWriter.values()) {
+            try {
+                w.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
         return "Success";
     }
 
@@ -568,9 +669,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                 Thread.sleep(milliseconds);
             } catch (InterruptedException e) {
                 e.printStackTrace();
-		System.exit(19);
             }
             time_diff = System.currentTimeMillis() - timeLastRecvdTuple;
+            System.out.println("RetEndOfStream, time_diff: " + time_diff);
         } while (time_diff < milliseconds || timeLastRecvdTuple == 0);
         return Long.toString(time_diff);
     }
