@@ -377,7 +377,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
         int cnt = 1;
         boolean finished = false;
         while (!finished) {
-            String path = csv_folder + "/siddhi/" + cnt;
+            String path = System.getenv().get("EXPOSE_PATH") + "/" + csv_folder + "/siddhi/" + cnt;
             Path p = Paths.get(path);
             if (Files.exists(p)) {
                 ++cnt;
