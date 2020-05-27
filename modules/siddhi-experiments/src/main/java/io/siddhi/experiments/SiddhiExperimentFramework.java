@@ -532,7 +532,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                     }
                     timeLastRecvdTuple = System.currentTimeMillis();
                     //if (++cnt2 % 100000 == 0)
-                    System.out.println("Received event number " + (++cnt2) + ": " + event);
+                    //System.out.println("Received event number " + (++cnt2) + ": " + event);
                     try {
                         tf.traceEvent(1, new Object[]{Thread.currentThread().getId(), Event.running_id + 1/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
                         siddhiAppRuntime.getInputHandler(finalStreamDefinition.getId()).send(event);
