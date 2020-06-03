@@ -684,6 +684,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
     @Override
     public String Configure() {
+        siddhiManager.setExtension("udf:doltoeur", DOLTOEURFunction.class);
         return "Success";
     }
 
