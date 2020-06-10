@@ -116,8 +116,8 @@ public class DOLTOEURFunction extends FunctionExecutor {
      */
     @Override
     protected Object execute(Object data, State state) {
-        double cast_data = (double) data;
-        return new Double(cast_data * 0.89);
+        long cast_data = (long) data;
+        return new Long((long) (cast_data * 0.89));
     }
 
     /**
