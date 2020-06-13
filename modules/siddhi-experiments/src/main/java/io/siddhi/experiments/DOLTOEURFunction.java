@@ -77,13 +77,13 @@ import io.siddhi.query.api.definition.Attribute;
         parameters = {
                 @Parameter(name = "price",
                         description = "USD that will be converted to Euro.",
-                        type = {DataType.DOUBLE}
+                        type = {DataType.LONG}
                 )
         },
         returnAttributes = {
                 @ReturnAttribute(
                         description = " ",
-                        type = {DataType.DOUBLE}
+                        type = {DataType.LONG}
                 )
         },
         examples = {
@@ -127,6 +127,6 @@ public class DOLTOEURFunction extends FunctionExecutor {
      */
     @Override
     public Attribute.Type getReturnType() {
-        return Attribute.Type.DOUBLE;
+        return Attribute.Type.LONG;
     }
 }
