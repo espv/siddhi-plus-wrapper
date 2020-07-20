@@ -3,6 +3,7 @@ package io.siddhi.experiments;
 import io.siddhi.core.SiddhiAppRuntime;
 import io.siddhi.core.SiddhiManager;
 import io.siddhi.core.event.Event;
+import io.siddhi.core.exception.CannotRestoreSiddhiAppStateException;
 import io.siddhi.core.stream.output.StreamCallback;
 import io.siddhi.experiments.utils.Tuple2;
 import io.siddhi.experiments.utils.Tuple3;
@@ -10,6 +11,7 @@ import io.siddhi.query.api.definition.Attribute;
 import io.siddhi.query.api.definition.StreamDefinition;
 import no.uio.ifi.ExperimentAPI;
 import no.uio.ifi.SpeComm;
+import no.uio.ifi.SpeSpecificAPI;
 import no.uio.ifi.TracingFramework;
 import org.wso2.extension.siddhi.map.binary.sinkmapper.BinaryEventConverter;
 import org.wso2.extension.siddhi.map.binary.sourcemapper.SiddhiEventConverter;
@@ -27,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 @SuppressWarnings("unchecked")
-public class SiddhiExperimentFramework implements ExperimentAPI {
+public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI {
     private volatile int totalEventCount = 0;
     private volatile int threadCnt = 0;
     private int batch_size;
@@ -37,6 +39,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     int number_threads = 1;
     long timeLastRecvdTuple = 0;
     SiddhiAppRuntime siddhiAppRuntime;
+    SpeComm speComm;
 
     TCPNettyServer tcpNettyServer;
     List<StreamListener> streamListeners = new ArrayList<>();
@@ -53,9 +56,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     StringBuilder queries = new StringBuilder();
     Map<Integer, Map<String, Object>> allSchemas = new HashMap<>();
     Map<Integer, String> siddhiSchemas = new HashMap<>();
-    Map<Integer, List<Integer>> schemaToNodeIds = new HashMap<>();
+    Map<Integer, List<Integer>> streamIdToNodeIds = new HashMap<>();
     Map<Integer, BufferedWriter> streamIdToCsvWriter = new HashMap<>();
     int port;
+    int node_id;
     private String trace_output_folder;
 
     //@Override
@@ -70,6 +74,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
     public void TearDownTcpServer() {
         //this.tcpNettyServer.shutdownGracefully();
+    }
+
+    public void SetNodeId(int node_id) {
+        this.node_id = node_id;
     }
 
     public void SetTraceOutputFolder(String f) {this.trace_output_folder = f;}
@@ -100,7 +108,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
         return "Success";
     }
 
-    @Override
     public String AddTuples(Map<String, Object> tuple, int quantity) {
         int stream_id = (int) tuple.get("stream-id");
         Map<String, Object> schema = allSchemas.get(stream_id);
@@ -124,90 +131,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
             }
         } catch (IOException e) {
             e.printStackTrace();
-        }
-        return "Success";
-    }
-
-    @Override
-    public String AddDataset(Map<String, Object> ds) {
-        int stream_id = (int) ds.get("stream-id");
-        Map<String, Object> schema = allSchemas.get(stream_id);
-
-        if (ds.get("type").equals("csv")) {
-            List<Class<?>> attr_types = new ArrayList<>();
-            String stream_name = (String) schema.get("name");
-            List<Map<String, Object>> tuple_format = (ArrayList<Map<String, Object>>) schema.get("tuple-format");
-            for (Map<String, Object> attribute : tuple_format) {
-                if (attribute.get("type").equals("string")) {
-                    attr_types.add(String.class);
-                } else if (attribute.get("type").equals("bool")) {
-                    attr_types.add(Boolean.class);
-                } else if (attribute.get("type").equals("int")) {
-                    attr_types.add(Integer.class);
-                } else if (attribute.get("type").equals("float")) {
-                    attr_types.add(Float.class);
-                } else if (attribute.get("type").equals("double")) {
-                    attr_types.add(Double.class);
-                } else if (attribute.get("type").equals("int")) {
-                    attr_types.add(Integer.class);
-                } else if (attribute.get("type").equals("number")) {
-                    attr_types.add(Float.class);
-                } else if (attribute.get("type").equals("timestamp")) {
-                    // I don't know how to add external timestamp
-                    attr_types.add(String.class);
-                } else if (attribute.get("type").equals("long-timestamp")) {
-                    // I don't know how to add external timestamp
-                    attr_types.add(Long.class);
-                } else {
-                    throw new RuntimeException("Invalid attribute type in dataset definition");
-                }
-            }
-
-            Attribute.Type[] streamType = (Attribute.Type[]) schema.get("stream-type");
-            int cnt = 0;
-            String dataset_path = System.getenv().get("EXPOSE_PATH") + "/" + ds.get("file");
-            try {
-                BufferedReader csvReader = new BufferedReader(new FileReader(dataset_path));
-
-                String row;
-                while ((row = csvReader.readLine()) != null) {
-                    String[] data = row.split(",");
-                    Object attr;
-                    Object[] siddhi_attributes = new Object[data.length];
-                    for (int i = 0; i < data.length; i++) {
-                        if (attr_types.get(i) == String.class) {
-                            attr = data[i];
-                        } else if (attr_types.get(i) == Boolean.class) {
-                            attr = Boolean.parseBoolean(data[i]);
-                        } else if (attr_types.get(i) == Integer.class) {
-                            attr = Integer.parseInt(data[i]);
-                        } else if (attr_types.get(i) == Double.class) {
-                            attr = Double.parseDouble(data[i]);
-                        } else if (attr_types.get(i) == Long.class) {
-                            attr = Long.parseLong(data[i]);
-                        } else if (attr_types.get(i) == Float.class) {
-                            attr = Float.parseFloat(data[i]);
-                        } else {
-                            throw new RuntimeException("Invalid attribute type in dataset definition");
-                        }
-                        siddhi_attributes[i] = attr;
-                    }
-                    eventIDs.add(cnt++);
-                    Event[] events = new Event[1];
-                    events[0] = new Event(System.currentTimeMillis(), siddhi_attributes);
-                    allPackets.add(new Tuple3<>(BinaryEventConverter.convertToBinaryMessage(events, streamType).array(), streamType, stream_name));
-                }
-                csvReader.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        } else if (ds.get("type").equals("yaml")) {
-            /*List<Map<String, Object>> tuples = readTuplesFromDataset(ds, schema);
-            for (Map<String, Object> tuple : tuples) {
-                AddTuples(tuple, 1);
-            }*/
-        } else {
-            throw new RuntimeException("Invalid dataset type for dataset with Id " + ds.get("id"));
         }
         return "Success";
     }
@@ -365,10 +288,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
     @Override
     public String AddNextHop(int streamId, int nodeId) {
-        if (!schemaToNodeIds.containsKey(streamId)) {
-            schemaToNodeIds.put(streamId, new ArrayList<>());
+        if (!streamIdToNodeIds.containsKey(streamId)) {
+            streamIdToNodeIds.put(streamId, new ArrayList<>());
         }
-        schemaToNodeIds.get(streamId).add(nodeId);
+        streamIdToNodeIds.get(streamId).add(nodeId);
         return "Success";
     }
 
@@ -407,13 +330,29 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
 
     @Override
     public String SetNidToAddress(Map<Integer, Map<String, Object>> newNodeIdToIpAndPort) {
+        for (int node_id : newNodeIdToIpAndPort.keySet()) {
+            if (nodeIdToIpAndPort.containsKey(node_id) || node_id == this.node_id) {
+                continue;
+            }
+
+            String ip = (String) newNodeIdToIpAndPort.get(node_id).get("ip");
+            int port = (int) newNodeIdToIpAndPort.get(node_id).get("spe-coordinator-port");
+            // Establish coordinator connection with node
+            try {
+                this.speComm.ConnectToSpeCoordinator(node_id, ip, port);
+            } catch (Exception e) {
+                e.printStackTrace();
+                System.err.println("Failed to connect to Node " + node_id + "'s SPE coordinator");
+                System.exit(20);
+            }
+        }
         nodeIdToIpAndPort = newNodeIdToIpAndPort;
         return "Success";
     }
 
     public void ProcessTuple(int stream_id, String stream_name, Attribute.Type[] streamTypes, Event event) {
-        if (schemaToNodeIds.containsKey(streamNameToId.get(stream_name))) {
-            for (Integer nodeId : schemaToNodeIds.get(stream_id)) {
+        if (streamIdToNodeIds.containsKey(streamNameToId.get(stream_name))) {
+            for (Integer nodeId : streamIdToNodeIds.get(stream_id)) {
                 TCPNettyClient tcpNettyClient = nodeIdToClient.get(nodeId);
                 if (tcpNettyClient == null) {
                     tcpNettyClient = new TCPNettyClient(true, true);
@@ -421,7 +360,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
                     for (int nid : nodeIdToIpAndPort.keySet()) {
                         if (nodeId.equals(nid)) {
                             Map<String, Object> addrAndPort = nodeIdToIpAndPort.get(nid);
-                            tcpNettyClient.connect((String) addrAndPort.get("ip"), (int) addrAndPort.get("port"));
+                            tcpNettyClient.connect((String) addrAndPort.get("ip"), (int) addrAndPort.get("client-port"));
                             break;
                         }
                     }
@@ -596,7 +535,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
         return "Success";
     }
 
-    @Override
     public String ProcessTuples(int number_tuples) {
         //System.out.println("Processing tuples " + (++cnt));
         if (allPackets.isEmpty()) {
@@ -630,13 +568,6 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     public String ClearQueries() {
         queries.setLength(0);
         tf.traceEvent(222);
-        return "Success";
-    }
-
-    @Override
-    public String ClearTuples() {
-        allPackets.clear();
-        tf.traceEvent(223);
         return "Success";
     }
 
@@ -683,20 +614,111 @@ public class SiddhiExperimentFramework implements ExperimentAPI {
     }
 
     @Override
+    public String MoveQueryState(int query_id, int new_host) {
+        byte[] snapshot = siddhiAppRuntime.snapshot();
+        Map<String, Object> task = new HashMap<>();
+        task.put("task", "loadQueryState");
+        List<Object> task_args = new ArrayList<>();
+        task_args.add(snapshot);
+        task.put("arguments", task_args);
+        task.put("node", new_host);
+        speComm.speCoordinatorComm.SendToSpe(task);
+        return "Success";
+    }
+
+    @Override
+    public String MoveStaticQueryState(int query_id, int new_host) {
+        return "Success";
+    }
+
+    @Override
+    public String MoveDynamicQueryState(int query_id, int new_host) {
+        return "Success";
+    }
+
+    public String LoadQueryState(byte[] snapshot) {
+        try {
+            siddhiAppRuntime.restore(snapshot);
+        } catch (CannotRestoreSiddhiAppStateException e) {
+            e.printStackTrace();
+            System.exit(21);
+        }
+        return "Success";
+    }
+
+    @Override
+    public String ResumeStream(int stream_id) {
+        return "Success";
+    }
+
+    @Override
+    public String StopStream(int stream_id) {
+        siddhiAppRuntime.shutdown();
+        return "Success";
+    }
+
+    @Override
+    public String BufferStream(int stream_id) {
+        return "Success";
+    }
+
+    @Override
+    public String StopAndBufferStream(int stream_id) {
+        return "Success";
+    }
+
+    @Override
+    public String RelayStream(int stream_id, int old_host, int new_host) {
+        return "Success";
+    }
+
+    @Override
+    public String RemoveNextHop(int stream_id, int host) {
+        for (int i = 0; i < streamIdToNodeIds.get(host).size(); i++) {
+            if (streamIdToNodeIds.get(host).get(i) == host) {
+                streamIdToNodeIds.get(host).remove(i);
+                break;
+            }
+        }
+        streamIdToNodeIds.get(stream_id).remove(host);
+        return "Success";
+    }
+
+    @Override
+    public String AddSourceNode(int query_id, int stream_id, List<Integer> node_id_list) {
+        return "Success";
+    }
+
+    @Override
     public String Configure() {
         siddhiManager.setExtension("udf:doltoeur", DOLTOEURFunction.class);
         return "Success";
     }
 
+    @Override
+    public void HandleSpeSpecificTask(Map<String, Object> task) {
+        String cmd = (String) task.get("task");
+        if (cmd.equals("loadQueryState")) {
+            List<Object> args = (List<Object>) task.get("arguments");
+            byte[] snapshot = (byte[]) args.get(0);
+            LoadQueryState(snapshot);
+            return;
+        } else {
+            throw new RuntimeException("Invalid task from mediator: " + cmd);
+        }
+    }
+
     public static void main(String[] args) {
         boolean continue_running = true;
         while (continue_running) {
-            SiddhiExperimentFramework experimentAPI = new SiddhiExperimentFramework();
-            SpeComm speComm = new SpeComm(args, experimentAPI);
-            experimentAPI.SetupClientTcpServer(speComm.GetClientPort());
-            experimentAPI.SetTraceOutputFolder(speComm.GetTraceOutputFolder());
+            SiddhiExperimentFramework siddhiExperimentFramework = new SiddhiExperimentFramework();
+            SpeComm speComm = new SpeComm(args, siddhiExperimentFramework, siddhiExperimentFramework);
+            siddhiExperimentFramework.speComm = speComm;
+            siddhiExperimentFramework.SetNodeId(speComm.GetNodeId());
+            siddhiExperimentFramework.SetupClientTcpServer(speComm.GetClientPort());
+            siddhiExperimentFramework.SetTraceOutputFolder(speComm.GetTraceOutputFolder());
             speComm.AcceptTasks();
-            experimentAPI.TearDownTcpServer();
+            siddhiExperimentFramework.TearDownTcpServer();
         }
     }
 }
