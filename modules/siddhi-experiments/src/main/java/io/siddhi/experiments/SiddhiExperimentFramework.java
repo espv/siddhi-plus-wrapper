@@ -39,6 +39,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     int number_threads = 1;
     long timeLastRecvdTuple = 0;
     Map<Integer, SiddhiAppRuntime> queryIdToSiddhiAppRuntime = new HashMap<>();
+    SiddhiAppRuntime siddhiAppRuntime;
     Map<Integer, Boolean> streamIdActive = new HashMap<>();
     Map<Integer, Boolean> streamIdBuffer = new HashMap<>();
     SpeComm speComm;
@@ -52,7 +53,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     ArrayList<Tuple3<byte[], Attribute.Type[], String>> allPackets = new ArrayList<>();
     ArrayList<Tuple2<String, StreamCallback>> allCallbacks = new ArrayList<>();
-    ArrayList<Integer> eventIDs = new ArrayList<>();
+    //ArrayList<Integer> eventIDs = new ArrayList<>();
 
     SiddhiManager siddhiManager = new SiddhiManager();
     StringBuilder queries = new StringBuilder();
@@ -359,13 +360,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     public void ProcessTuple(int stream_id, String stream_name, Attribute.Type[] streamTypes, Event event) {
         if (!streamIdActive.getOrDefault(stream_id, false)) {
-            System.out.println("Stream " + stream_id + " is inactive");
             if (streamIdBuffer.getOrDefault(stream_id, false)) {
-                System.out.println("Therefore, we buffer the tuple");
                 streamIdToBuffer.computeIfAbsent(stream_id, k -> new ArrayList<>());
                 streamIdToBuffer.get(stream_id).add(new Tuple3<>(stream_name, streamTypes, event));
-            } else {
-                System.out.println("And we throw the tuples away");
             }
             return;
         }
@@ -543,6 +540,14 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             }
             queryIdToSiddhiAppRuntime.get(query_id).start();
         }
+
+        if (queryIdToSiddhiAppRuntime.isEmpty()) {
+            siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(schemasString.toString());
+            for (Tuple2<String, StreamCallback> t : allCallbacks) {
+                siddhiAppRuntime.addCallback(t.getFirst(), t.getSecond());
+            }
+            siddhiAppRuntime.start();
+        }
     }
 
     @Override
@@ -695,6 +700,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 Event event = tuple.getThird();
                 ProcessTuple(stream_id, stream_name, streamTypes, event);
             }
+            streamIdToBuffer.getOrDefault(stream_id, new ArrayList<>()).clear();
         }
     }
 

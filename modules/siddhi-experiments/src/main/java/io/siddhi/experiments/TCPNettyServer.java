@@ -213,6 +213,7 @@ class TCPNettyClient {
         map.put("sessionId", sessionId);
         map.put("channelId", channelId);
         map.put("message", message);
+        assert channel != null;
         ChannelFuture cf = channel.writeAndFlush(map);
         return cf;
     }
