@@ -200,6 +200,8 @@ class TCPNettyClient {
         try {
             hostAndPort = host + ":" + port;
             channel = bootstrap.connect(host, port).sync().channel();
+            // Strangely, channel is sometimes null when calling the send method below
+            assert channel != null;
             sessionId = UUID.randomUUID() + "-" + hostAndPort;
         } catch (Throwable e) {
             throw new RuntimeException("Error connecting to '" + hostAndPort + "', " + e.getMessage(), e);

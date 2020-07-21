@@ -38,7 +38,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     private TracingFramework tf = new TracingFramework();
     int number_threads = 1;
     long timeLastRecvdTuple = 0;
-    SiddhiAppRuntime siddhiAppRuntime;
+    Map<Integer, SiddhiAppRuntime> queryIdToSiddhiAppRuntime = new HashMap<>();
+    Map<Integer, Boolean> streamIdActive = new HashMap<>();
+    Map<Integer, Boolean> streamIdBuffer = new HashMap<>();
     SpeComm speComm;
 
     TCPNettyServer tcpNettyServer;
@@ -58,6 +60,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     Map<Integer, String> siddhiSchemas = new HashMap<>();
     Map<Integer, List<Integer>> streamIdToNodeIds = new HashMap<>();
     Map<Integer, BufferedWriter> streamIdToCsvWriter = new HashMap<>();
+    Map<Tuple2<Integer, Integer>, List<Integer>> streamIdAndQueryIdToSourceNodes = new HashMap<>();
+    Map<Integer, Map<String, Object>> queryIdToMapQuery = new HashMap<>();
+    Map<Integer, List<Tuple3<String, Attribute.Type[], Event>>> streamIdToBuffer = new HashMap<>();
     int port;
     int node_id;
     private String trace_output_folder;
@@ -91,7 +96,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String StopRuntimeEnv() {
-        siddhiAppRuntime.shutdown();
+        for (SiddhiAppRuntime runtime : queryIdToSiddhiAppRuntime.values()) {
+            runtime.shutdown();
+        }
         tf.writeTraceToFile(this.trace_output_folder, this.getClass().getSimpleName());
         return "Success";
     }
@@ -351,13 +358,24 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     public void ProcessTuple(int stream_id, String stream_name, Attribute.Type[] streamTypes, Event event) {
+        if (!streamIdActive.getOrDefault(stream_id, false)) {
+            System.out.println("Stream " + stream_id + " is inactive");
+            if (streamIdBuffer.getOrDefault(stream_id, false)) {
+                System.out.println("Therefore, we buffer the tuple");
+                streamIdToBuffer.computeIfAbsent(stream_id, k -> new ArrayList<>());
+                streamIdToBuffer.get(stream_id).add(new Tuple3<>(stream_name, streamTypes, event));
+            } else {
+                System.out.println("And we throw the tuples away");
+            }
+            return;
+        }
         if (streamIdToNodeIds.containsKey(streamNameToId.get(stream_name))) {
             for (Integer nodeId : streamIdToNodeIds.get(stream_id)) {
                 TCPNettyClient tcpNettyClient = nodeIdToClient.get(nodeId);
                 if (tcpNettyClient == null) {
                     tcpNettyClient = new TCPNettyClient(true, true);
                     nodeIdToClient.put(nodeId, tcpNettyClient);
-                    for (int nid : nodeIdToIpAndPort.keySet()) {
+                    for (Integer nid : nodeIdToIpAndPort.keySet()) {
                         if (nodeId.equals(nid)) {
                             Map<String, Object> addrAndPort = nodeIdToIpAndPort.get(nid);
                             tcpNettyClient.connect((String) addrAndPort.get("ip"), (int) addrAndPort.get("client-port"));
@@ -392,6 +410,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             streamNameToId.put(stream_name, stream_id);
             // Create own schema based in the loop below instead of using "siddhi-specific" schema.
             allSchemas.put(stream_id, schema);
+            streamIdActive.put(stream_id, true);
 
             StringBuilder siddhi_schema = new StringBuilder("define stream " + stream_name + " (");
             StreamDefinition streamDefinition = StreamDefinition.id(stream_name);
@@ -474,7 +493,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     //System.out.println("Received event number " + (++cnt2) + ": " + event);
                     try {
                         tf.traceEvent(1, new Object[]{Thread.currentThread().getId(), Event.running_id + 1/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
-                        siddhiAppRuntime.getInputHandler(finalStreamDefinition.getId()).send(event);
+                        for (SiddhiAppRuntime runtime : queryIdToSiddhiAppRuntime.values()) {
+                            runtime.getInputHandler(finalStreamDefinition.getId()).send(event);
+                        }
                         tf.traceEvent(100, new Object[]{Thread.currentThread().getId(), Event.running_id/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
                         //ProcessTuple(stream_id, finalStreamDefinition.getId(), streamTypes, event);
                     } catch (InterruptedException ie) {
@@ -513,20 +534,25 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         for (String siddhiSchema : siddhiSchemas.values()) {
             schemasString.append(siddhiSchema);
         }
-        siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + queries.toString());
-        for (Tuple2<String, StreamCallback> t : allCallbacks) {
-            siddhiAppRuntime.addCallback(t.getFirst(), t.getSecond());
+        for (int query_id : queryIdToMapQuery.keySet()) {
+            Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
+            String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
+            queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
+            for (Tuple2<String, StreamCallback> t : allCallbacks) {
+                queryIdToSiddhiAppRuntime.get(query_id).addCallback(t.getFirst(), t.getSecond());
+            }
+            queryIdToSiddhiAppRuntime.get(query_id).start();
         }
-        siddhiAppRuntime.start();
     }
 
     @Override
-    public String DeployQueries(Map<String, Object> json_query) {
-        String query = (String) ((Map<String, Object>) json_query.get("sql-query")).get("siddhi");
+    public String DeployQueries(Map<String, Object> map_query) {
+        String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
         if (query == null || query.equals("")) {
             return "Empty query";
         }
-        int query_id = (int) json_query.get("id");
+        int query_id = (int) map_query.get("id");
+        queryIdToMapQuery.put(query_id, map_query);
         //for (int i = 0; i < quantity; i++) {
         tf.traceEvent(221, new Object[]{query_id});
         queries.append(query).append("\n");
@@ -594,7 +620,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String RetEndOfStream(int milliseconds) {
-        long time_diff = 0;
+        long time_diff;
         do {
             try {
                 Thread.sleep(milliseconds);
@@ -615,11 +641,13 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String MoveQueryState(int query_id, int new_host) {
-        byte[] snapshot = siddhiAppRuntime.snapshot();
+        byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
         Map<String, Object> task = new HashMap<>();
         task.put("task", "loadQueryState");
         List<Object> task_args = new ArrayList<>();
         task_args.add(snapshot);
+        Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
+        task_args.add(map_query);
         task.put("arguments", task_args);
         task.put("node", new_host);
         speComm.speCoordinatorComm.SendToSpe(task);
@@ -636,9 +664,21 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String LoadQueryState(byte[] snapshot) {
+    public String LoadQueryState(byte[] snapshot, Map<String, Object> map_query) {
+        DeployQueries(map_query);
+        int query_id = (int) map_query.get("id");
+        String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
         try {
-            siddhiAppRuntime.restore(snapshot);
+            StringBuilder schemasString = new StringBuilder();
+            for (String siddhiSchema : siddhiSchemas.values()) {
+                schemasString.append(siddhiSchema);
+            }
+            queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
+            for (Tuple2<String, StreamCallback> t : allCallbacks) {
+                queryIdToSiddhiAppRuntime.get(query_id).addCallback(t.getFirst(), t.getSecond());
+            }
+            queryIdToSiddhiAppRuntime.get(query_id).start();
+            queryIdToSiddhiAppRuntime.get(query_id).restore(snapshot);
         } catch (CannotRestoreSiddhiAppStateException e) {
             e.printStackTrace();
             System.exit(21);
@@ -646,46 +686,77 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
+    public void FlushBuffer(int stream_id) {
+        if (streamIdBuffer.getOrDefault(stream_id, false)) {
+            // Flush buffer
+            for (Tuple3<String, Attribute.Type[], Event> tuple : streamIdToBuffer.getOrDefault(stream_id, new ArrayList<>())) {
+                String stream_name = tuple.getFirst();
+                Attribute.Type[] streamTypes = tuple.getSecond();
+                Event event = tuple.getThird();
+                ProcessTuple(stream_id, stream_name, streamTypes, event);
+            }
+        }
+    }
+
     @Override
     public String ResumeStream(int stream_id) {
+        streamIdActive.put(stream_id, true);
+        FlushBuffer(stream_id);
+        streamIdBuffer.put(stream_id, false);
         return "Success";
     }
 
     @Override
     public String StopStream(int stream_id) {
-        siddhiAppRuntime.shutdown();
+        streamIdActive.put(stream_id, false);
         return "Success";
     }
 
     @Override
     public String BufferStream(int stream_id) {
+        streamIdBuffer.put(stream_id, true);
         return "Success";
     }
 
     @Override
-    public String StopAndBufferStream(int stream_id) {
+    public String BufferAndStopStream(int stream_id) {
+        BufferStream(stream_id);
+        StopStream(stream_id);
+        return "Success";
+    }
+
+    @Override
+    public String BufferStopAndRelayStream(int stream_id, int old_host, int new_host) {
+        BufferStream(stream_id);
+        StopStream(stream_id);
+        RelayStream(stream_id, old_host, new_host);
         return "Success";
     }
 
     @Override
     public String RelayStream(int stream_id, int old_host, int new_host) {
+        RemoveNextHop(stream_id, old_host);
+        AddNextHop(stream_id, new_host);
         return "Success";
     }
 
     @Override
     public String RemoveNextHop(int stream_id, int host) {
-        for (int i = 0; i < streamIdToNodeIds.get(host).size(); i++) {
-            if (streamIdToNodeIds.get(host).get(i) == host) {
-                streamIdToNodeIds.get(host).remove(i);
+        for (int i = 0; i < streamIdToNodeIds.get(stream_id).size(); i++) {
+            if (streamIdToNodeIds.get(stream_id).get(i) == host) {
+                streamIdToNodeIds.get(stream_id).remove(i);
                 break;
             }
         }
-        streamIdToNodeIds.get(stream_id).remove(host);
         return "Success";
     }
 
     @Override
-    public String AddSourceNode(int query_id, int stream_id, List<Integer> node_id_list) {
+    public String AddSourceNodes(int query_id, int stream_id, List<Integer> node_id_list) {
+        Tuple2<Integer, Integer> key = new Tuple2(stream_id, query_id);
+        List<Integer> value = this.streamIdAndQueryIdToSourceNodes.getOrDefault(key, new ArrayList<>());
+        value.addAll(node_id_list);
+        streamIdAndQueryIdToSourceNodes.put(key, value);
         return "Success";
     }
 
@@ -701,7 +772,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         if (cmd.equals("loadQueryState")) {
             List<Object> args = (List<Object>) task.get("arguments");
             byte[] snapshot = (byte[]) args.get(0);
-            LoadQueryState(snapshot);
+            Map<String, Object> query = (Map<String, Object>) args.get(1);
+            LoadQueryState(snapshot, query);
             return;
         } else {
             throw new RuntimeException("Invalid task from mediator: " + cmd);
