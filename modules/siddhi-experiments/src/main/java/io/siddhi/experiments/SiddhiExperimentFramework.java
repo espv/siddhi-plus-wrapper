@@ -23,10 +23,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @SuppressWarnings("unchecked")
 public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI {
@@ -68,6 +65,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     int node_id;
     private String trace_output_folder;
 
+    boolean execution_locked = false;
+
     //@Override
     public String SetupClientTcpServer(int port) {
         this.tcpNettyServer = new TCPNettyServer();
@@ -87,6 +86,20 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     public void SetTraceOutputFolder(String f) {this.trace_output_folder = f;}
+
+    @Override
+    public void LockExecution() {
+        execution_locked = true;
+    }
+
+    @Override
+    public void UnlockExecution() {
+        execution_locked = false;
+    }
+
+    public boolean IsExecutionLocked() {
+        return execution_locked;
+    }
 
     @Override
     public String StartRuntimeEnv() {
@@ -295,11 +308,15 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }*/
 
     @Override
-    public String AddNextHop(int streamId, int nodeId) {
-        if (!streamIdToNodeIds.containsKey(streamId)) {
-            streamIdToNodeIds.put(streamId, new ArrayList<>());
+    public String AddNextHop(List<Integer> streamId_list, List<Integer> nodeId_list) {
+        for (int streamId : streamId_list) {
+            if (!streamIdToNodeIds.containsKey(streamId)) {
+                streamIdToNodeIds.put(streamId, new ArrayList<>());
+            }
+            for (int nodeId : nodeId_list) {
+                streamIdToNodeIds.get(streamId).add(nodeId);
+            }
         }
-        streamIdToNodeIds.get(streamId).add(nodeId);
         return "Success";
     }
 
@@ -509,6 +526,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
                 @Override
                 public void receive(Event[] events) {
+                    if (IsExecutionLocked()) {
+                        Thread.yield();
+                    }
                     for (Event event : events) {
                         cnt3 += events.length;
                         eventCount++;
@@ -654,7 +674,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
         task_args.add(map_query);
         task.put("arguments", task_args);
-        task.put("node", new_host);
+        task.put("node", Collections.singletonList(new_host));
         speComm.speCoordinatorComm.SendToSpe(task);
         return "Success";
     }
@@ -705,61 +725,71 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
-    public String ResumeStream(int stream_id) {
-        streamIdActive.put(stream_id, true);
-        FlushBuffer(stream_id);
-        streamIdBuffer.put(stream_id, false);
+    public String ResumeStream(List<Integer> stream_id_list) {
+        for (int stream_id : stream_id_list) {
+            streamIdActive.put(stream_id, true);
+            FlushBuffer(stream_id);
+            streamIdBuffer.put(stream_id, false);
+        }
         return "Success";
     }
 
     @Override
-    public String StopStream(int stream_id) {
-        streamIdActive.put(stream_id, false);
+    public String StopStream(List<Integer> stream_id_list) {
+        for (int stream_id : stream_id_list) {
+            streamIdActive.put(stream_id, false);
+        }
         return "Success";
     }
 
     @Override
-    public String BufferStream(int stream_id) {
-        streamIdBuffer.put(stream_id, true);
+    public String BufferStream(List<Integer> stream_id_list) {
+        for (int stream_id : stream_id_list) {
+            streamIdBuffer.put(stream_id, true);
+        }
         return "Success";
     }
 
     @Override
-    public String BufferAndStopStream(int stream_id) {
-        BufferStream(stream_id);
-        StopStream(stream_id);
+    public String BufferAndStopStream(List<Integer> stream_id_list) {
+        BufferStream(stream_id_list);
+        StopStream(stream_id_list);
         return "Success";
     }
 
     @Override
-    public String BufferStopAndRelayStream(int stream_id, int old_host, int new_host) {
-        BufferStream(stream_id);
-        StopStream(stream_id);
-        RelayStream(stream_id, old_host, new_host);
+    public String BufferStopAndRelayStream(List<Integer> stream_id_list, List<Integer> old_host_list, List<Integer> new_host_list) {
+        BufferStream(stream_id_list);
+        StopStream(stream_id_list);
+        RelayStream(stream_id_list, old_host_list, new_host_list);
         return "Success";
     }
 
     @Override
-    public String RelayStream(int stream_id, int old_host, int new_host) {
-        RemoveNextHop(stream_id, old_host);
-        AddNextHop(stream_id, new_host);
+    public String RelayStream(List<Integer> stream_id_list, List<Integer> old_host_list, List<Integer> new_host_list) {
+        RemoveNextHop(stream_id_list, old_host_list);
+        AddNextHop(stream_id_list, new_host_list);
         return "Success";
     }
 
     @Override
-    public String RemoveNextHop(int stream_id, int host) {
-        for (int i = 0; i < streamIdToNodeIds.get(stream_id).size(); i++) {
-            if (streamIdToNodeIds.get(stream_id).get(i) == host) {
-                streamIdToNodeIds.get(stream_id).remove(i);
-                break;
+    public String RemoveNextHop(List<Integer> stream_id_list, List<Integer> host_list) {
+        for (int stream_id : stream_id_list) {
+            for (int i = 0; i < streamIdToNodeIds.get(stream_id).size(); i++) {
+                for (int host : host_list) {
+                    if (streamIdToNodeIds.get(stream_id).get(i) == host) {
+                        streamIdToNodeIds.get(stream_id).remove(i);
+                        break;
+                    }
+                }
             }
         }
         return "Success";
     }
 
     @Override
-    public String AddSourceNodes(int query_id, int stream_id, List<Integer> node_id_list) {
-        Tuple2<Integer, Integer> key = new Tuple2(stream_id, query_id);
+    public String AddSourceNodes(int query_id, List<Integer> stream_id_list, List<Integer> node_id_list) {
+        Tuple2<Integer, Integer> key = new Tuple2(stream_id_list, query_id);
         List<Integer> value = this.streamIdAndQueryIdToSourceNodes.getOrDefault(key, new ArrayList<>());
         value.addAll(node_id_list);
         streamIdAndQueryIdToSourceNodes.put(key, value);
