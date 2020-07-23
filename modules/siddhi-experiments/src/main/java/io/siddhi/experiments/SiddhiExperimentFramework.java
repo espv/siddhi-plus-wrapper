@@ -400,6 +400,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
                 List<Event> to_send = new ArrayList<>();
                 to_send.add(event);
+                tf.traceEvent(2);
                 try {
                     tcpNettyClient.send(stream_name, BinaryEventConverter.convertToBinaryMessage(
                             to_send.toArray(new Event[1]), streamTypes).array()).await();
