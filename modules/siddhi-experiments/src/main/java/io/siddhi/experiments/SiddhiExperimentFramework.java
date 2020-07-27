@@ -45,6 +45,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     List<StreamListener> streamListeners = new ArrayList<>();
     Map<Integer, TCPNettyClient> nodeIdToClient = new HashMap<>();
     Map<String, Integer> streamNameToId = new HashMap<>();
+    Map<Integer, String> streamIdToName = new HashMap<>();
     Map<Integer, Map<String, Object>> nodeIdToIpAndPort = new HashMap<>();
     Map<Integer, List<Map<String, Object>>> datasetIdToTuples = new HashMap<>();
 
@@ -60,7 +61,11 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     Map<Integer, BufferedWriter> streamIdToCsvWriter = new HashMap<>();
     Map<Tuple2<Integer, Integer>, List<Integer>> streamIdAndQueryIdToSourceNodes = new HashMap<>();
     Map<Integer, Map<String, Object>> queryIdToMapQuery = new HashMap<>();
-    Map<Integer, List<Tuple3<String, Attribute.Type[], Event>>> streamIdToBuffer = new HashMap<>();
+    List<Tuple2<Integer, Event>> incomingTupleBuffer = new ArrayList<>();
+    List<Tuple2<Integer, byte[]>> outgoingTupleBuffer = new ArrayList<>();
+
+    boolean isPotentialHost = false;
+
     int port;
     int node_id;
     private String trace_output_folder;
@@ -104,6 +109,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     @Override
     public String StartRuntimeEnv() {
         timeLastRecvdTuple = 0;
+        received_tuples = 0;
+        actually_sent_tuples = 0;
         StartSiddhiAppRuntime();
         return "Success";
     }
@@ -169,7 +176,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
-    public String SendDsAsStream(Map<String, Object> ds) {
+    public String SendDsAsStream(Map<String, Object> ds, int iterations, boolean realism) {
         //System.out.println("Processing dataset");
         int ds_id = (int) ds.get("id");
         List<Map<String, Object>> tuples = datasetIdToTuples.get(ds_id);
@@ -236,13 +243,16 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 		}
 
 		if (!realism) {
-			ProcessTuples(tuples.size());
+			SendTuples(tuples.size());
 		}*/
 
-        for (Map<String, Object> tuple : tuples) {
-            AddTuples(tuple, 1);
+        for (int i = 0; i < iterations; i++) {
+            for (Map<String, Object> tuple : tuples) {
+                AddTuples(tuple, 1);
+            }
         }
-        ProcessTuples(tuples.size());
+        SendTuples(allPackets.size());
+        allPackets.clear();
         return "Success";
     }
 
@@ -375,22 +385,18 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public void ProcessTuple(int stream_id, String stream_name, Attribute.Type[] streamTypes, Event event) {
-        if (!streamIdActive.getOrDefault(stream_id, false)) {
-            if (streamIdBuffer.getOrDefault(stream_id, false)) {
-                streamIdToBuffer.computeIfAbsent(stream_id, k -> new ArrayList<>());
-                streamIdToBuffer.get(stream_id).add(new Tuple3<>(stream_name, streamTypes, event));
-            }
-            return;
-        }
-        if (streamIdToNodeIds.containsKey(streamNameToId.get(stream_name))) {
-            for (Integer nodeId : streamIdToNodeIds.get(stream_id)) {
+    public void SendTuple(int stream_id, byte[] serialized_tuple) {
+        String stream_name = streamIdToName.get(stream_id);
+        if (streamIdToNodeIds.containsKey(stream_id)) {
+            List<Integer> node_ids = streamIdToNodeIds.get(stream_id);
+            for (int i = 0; i < node_ids.size(); i++) {
+                int nodeId = node_ids.get(i);
                 TCPNettyClient tcpNettyClient = nodeIdToClient.get(nodeId);
                 if (tcpNettyClient == null) {
                     tcpNettyClient = new TCPNettyClient(true, true);
                     nodeIdToClient.put(nodeId, tcpNettyClient);
-                    for (Integer nid : nodeIdToIpAndPort.keySet()) {
-                        if (nodeId.equals(nid)) {
+                    for (int nid : nodeIdToIpAndPort.keySet()) {
+                        if (nodeId == nid) {
                             Map<String, Object> addrAndPort = nodeIdToIpAndPort.get(nid);
                             tcpNettyClient.connect((String) addrAndPort.get("ip"), (int) addrAndPort.get("client-port"));
                             break;
@@ -398,13 +404,15 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     }
                 }
 
-                List<Event> to_send = new ArrayList<>();
-                to_send.add(event);
-                tf.traceEvent(2);
+                tf.traceEvent(2, new Object[]{nodeId, stream_id});
+                //System.out.println("SendTuple stream name: " + stream_name);
                 try {
-                    tcpNettyClient.send(stream_name, BinaryEventConverter.convertToBinaryMessage(
-                            to_send.toArray(new Event[1]), streamTypes).array()).await();
-                } catch (IOException | InterruptedException e) {
+                    actually_sent_tuples++;
+                    if (actually_sent_tuples % 10000 == 0) {
+                        System.out.println("Actually sent " + actually_sent_tuples + " tuples");
+                    }
+                    tcpNettyClient.send(stream_name, serialized_tuple).await();
+                } catch (InterruptedException e) {
                     e.printStackTrace();
                     System.exit(6);
                 } catch (Exception e) {
@@ -415,14 +423,56 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         }
     }
 
+    int actually_sent_tuples = 0;
+    public void PrepareToSendTuple(int stream_id, Attribute.Type[] streamTypes, Event event) {
+        List<Event> to_send = new ArrayList<>();
+        to_send.add(event);
+        byte[] serialized_tuple = null;
+        try {
+            serialized_tuple = BinaryEventConverter.convertToBinaryMessage(
+                    to_send.toArray(new Event[1]), streamTypes).array();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(22);
+        }
+        if (!streamIdActive.getOrDefault(stream_id, false)) {
+            if (streamIdBuffer.getOrDefault(stream_id, false)) {
+                outgoingTupleBuffer.add(new Tuple2(stream_id, serialized_tuple));
+            }
+            return;
+        }
+
+        SendTuple(stream_id, serialized_tuple);
+    }
+
+    @Override
+    public String SetAsPotentialHost() {
+        return "Success";
+    }
+
+    public void ProcessTuple(int stream_id, String stream_name, Event event) {
+        try {
+            tf.traceEvent(1, new Object[]{Thread.currentThread().getId(), Event.running_id + 1, stream_id});
+            for (SiddhiAppRuntime runtime : queryIdToSiddhiAppRuntime.values()) {
+                runtime.getInputHandler(stream_name).send(event);
+            }
+            tf.traceEvent(100, new Object[]{Thread.currentThread().getId(), Event.running_id, stream_id});
+        } catch (InterruptedException ie) {
+            ie.printStackTrace();
+        }
+    }
+
     int cnt2 = 0;
     int cnt3 = 0;
+    long received_tuples = 0;
+    long received_tuples_3 = 0;
     @Override
     public String AddSchemas(List<Map<String, Object>> schemas) {
         for (Map<String, Object> schema : schemas) {
             String stream_name = (String) schema.get("name");
             int stream_id = (int) schema.get("stream-id");
             streamNameToId.put(stream_name, stream_id);
+            streamIdToName.put(stream_id, stream_name);
             // Create own schema based in the loop below instead of using "siddhi-specific" schema.
             allSchemas.put(stream_id, schema);
             streamIdActive.put(stream_id, true);
@@ -504,18 +554,17 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                         }
                     }
                     timeLastRecvdTuple = System.currentTimeMillis();
+                    received_tuples++;
                     //if (++cnt2 % 100000 == 0)
                     //System.out.println("Received event number " + (++cnt2) + ": " + event);
-                    try {
-                        tf.traceEvent(1, new Object[]{Thread.currentThread().getId(), Event.running_id + 1/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
-                        for (SiddhiAppRuntime runtime : queryIdToSiddhiAppRuntime.values()) {
-                            runtime.getInputHandler(finalStreamDefinition.getId()).send(event);
+
+                    if (!streamIdActive.getOrDefault(stream_id, false)) {
+                        if (streamIdBuffer.getOrDefault(stream_id, false)) {
+                            incomingTupleBuffer.add(new Tuple2(stream_id, event));
                         }
-                        tf.traceEvent(100, new Object[]{Thread.currentThread().getId(), Event.running_id/*, eventIDs.get((int)curPktsPublished%allPackets.size())*/});
-                        //ProcessTuple(stream_id, finalStreamDefinition.getId(), streamTypes, event);
-                    } catch (InterruptedException ie) {
-                        ie.printStackTrace();
+                        return;
                     }
+                    ProcessTuple(stream_id, finalStreamDefinition.getId(), event);
                 }
             };
 
@@ -527,7 +576,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
                 @Override
                 public void receive(Event[] events) {
-                    if (IsExecutionLocked()) {
+                    while (IsExecutionLocked()) {
                         Thread.yield();
                     }
                     for (Event event : events) {
@@ -536,7 +585,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                         if (cnt3 % 100000 == 0)
                             System.out.println("Produced complex event " + event.GetId() + " to stream " + event.toString());
                         tf.traceEvent(6, new Object[]{Thread.currentThread().getId()});
-                        ProcessTuple(stream_id, stream_name, streamTypes, event);
+                        PrepareToSendTuple(stream_id, streamTypes, event);
                     }
                 }
             };
@@ -587,29 +636,39 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String ProcessTuples(int number_tuples) {
-        //System.out.println("Processing tuples " + (++cnt));
+    public String SendTuples(int number_tuples) {
+        System.out.println("Sending " + number_tuples + " tuples");
         if (allPackets.isEmpty()) {
             System.out.println("No tuples to process");
         }
-        // Invoke all threads for this loop. Perhaps they have to wait until I wait a few milliseconds and unlock a mutex
-        for (int i = 0; i < number_threads; i++) {
-            //new Thread(() -> {
-            while (pktsPublished < number_tuples) {
-                if (allPackets.isEmpty()) {
-                    break;
+
+        long startTime = System.nanoTime();
+        while (pktsPublished < number_tuples) {
+            if (allPackets.isEmpty()) {
+                break;
+            }
+
+            int curPktsPublished = pktsPublished;
+            Tuple3<byte[], Attribute.Type[], String> t = allPackets.get(curPktsPublished % allPackets.size());
+            ++pktsPublished;
+            if (pktsPublished % 10000 == 0) {
+                System.out.println("SendTuples: " + pktsPublished + " tuples");
+            }
+            if (interval_wait != 0 && pktsPublished % batch_size == 0) {
+                // Microseconds
+                long time_diff = (System.nanoTime() - startTime) / 1000;
+                while (time_diff < pktsPublished * interval_wait) {
+                    time_diff = (System.nanoTime() - startTime) / 1000;
                 }
-                int curPktsPublished = pktsPublished;
-                Tuple3<byte[], Attribute.Type[], String> t = allPackets.get(curPktsPublished % allPackets.size());
-                ++pktsPublished;
-                // Event.running_id+1 becomes the ID of the event that is created
-                // We record the thread ID, running event Id and the base event Id
-                Event[] events;
-                events = SiddhiEventConverter.toConvertToSiddhiEvents(ByteBuffer.wrap(t.getFirst()), t.getSecond());
-                for (Event event : events) {
-                    int stream_id = streamNameToId.get(t.getThird());
-                    ProcessTuple(stream_id, t.getThird(), t.getSecond(), event);
-                }
+            }
+            // Event.running_id+1 becomes the ID of the event that is created
+            // We record the thread ID, running event Id and the base event Id
+            Event[] events;
+            events = SiddhiEventConverter.toConvertToSiddhiEvents(ByteBuffer.wrap(t.getFirst()), t.getSecond());
+            for (Event event : events) {
+                int stream_id = streamNameToId.get(t.getThird());
+
+                PrepareToSendTuple(stream_id, t.getSecond(), event);
             }
         }
         pktsPublished = 0;
@@ -660,6 +719,19 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
+    public String RetReceivedXTuples(int number_tuples) {
+        do {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            System.out.println("RetReceivedXTuples, number received tuples: " + received_tuples);
+        } while (received_tuples < number_tuples);
+        return Long.toString(number_tuples);
+    }
+
+    @Override
     public String TraceTuple(int tracepointId, List<String> traceArguments) {
         tf.traceEvent(tracepointId, traceArguments.toArray());
         return "Success";
@@ -668,6 +740,15 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     @Override
     public String MoveQueryState(int query_id, int new_host) {
         byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
+        // If tuples are currently being processed, the snapshot will contain them.
+        // If a new tuple is received between the snapshot is received above and the
+        // runtime environment is shut down below, there is a lock that prevents a conflict
+        // from occurring. The lock currently has flaws that need to be fixed.
+        queryIdToSiddhiAppRuntime.get(query_id).shutdown();
+        queryIdToSiddhiAppRuntime.remove(query_id);
+        if (queryIdToSiddhiAppRuntime.isEmpty()) {
+            StartSiddhiAppRuntime();
+        }
         Map<String, Object> task = new HashMap<>();
         task.put("task", "loadQueryState");
         List<Object> task_args = new ArrayList<>();
@@ -712,26 +793,45 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public void FlushBuffer(int stream_id) {
-        if (streamIdBuffer.getOrDefault(stream_id, false)) {
-            // Flush buffer
-            for (Tuple3<String, Attribute.Type[], Event> tuple : streamIdToBuffer.getOrDefault(stream_id, new ArrayList<>())) {
-                String stream_name = tuple.getFirst();
-                Attribute.Type[] streamTypes = tuple.getSecond();
-                Event event = tuple.getThird();
-                ProcessTuple(stream_id, stream_name, streamTypes, event);
+    public void FlushBuffer(List<Integer> stream_id_list) {
+        int sent_buffered_tuples = 0;
+        System.out.println("FlushBuffer: Outgoing buffer has " + outgoingTupleBuffer.size() + " tuples in it");
+        for (int i = outgoingTupleBuffer.size() - 1; i >= 0; i--) {
+            int buffered_tuple_stream_id = outgoingTupleBuffer.get(i).getFirst();
+            byte[] serialized_tuple = outgoingTupleBuffer.get(i).getSecond();
+            if (stream_id_list.contains(buffered_tuple_stream_id)) {
+                if (sent_buffered_tuples % 10000 == 0) {
+                    System.out.println("FlushBuffer: sent " + sent_buffered_tuples + " tuples");
+                }
+                SendTuple(buffered_tuple_stream_id, serialized_tuple);
+                outgoingTupleBuffer.remove(i);
+                ++sent_buffered_tuples;
             }
-            streamIdToBuffer.getOrDefault(stream_id, new ArrayList<>()).clear();
         }
+        System.out.println("FlushBuffer: " + sent_buffered_tuples + " buffered tuples");
+
+        System.out.println("Incoming buffer has " + outgoingTupleBuffer.size() + " tuples in it");
+        for (int i = incomingTupleBuffer.size() - 1; i >= 0; i--) {
+            int buffered_tuple_stream_id = incomingTupleBuffer.get(i).getFirst();
+            Event event = incomingTupleBuffer.get(i).getSecond();
+            if (stream_id_list.contains(buffered_tuple_stream_id)) {
+                String stream_name = streamIdToName.get(buffered_tuple_stream_id);
+                ProcessTuple(buffered_tuple_stream_id, stream_name, event);
+                incomingTupleBuffer.remove(i);
+                ++sent_buffered_tuples;
+            }
+        }
+        System.out.println("Processed " + sent_buffered_tuples + " buffered tuples");
     }
 
     @Override
     public String ResumeStream(List<Integer> stream_id_list) {
         for (int stream_id : stream_id_list) {
             streamIdActive.put(stream_id, true);
-            FlushBuffer(stream_id);
             streamIdBuffer.put(stream_id, false);
         }
+        System.out.println("Sent " + actually_sent_tuples + " tuples");
+        FlushBuffer(stream_id_list);
         return "Success";
     }
 
@@ -760,6 +860,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String BufferStopAndRelayStream(List<Integer> stream_id_list, List<Integer> old_host_list, List<Integer> new_host_list) {
+        System.out.println("Sent " + actually_sent_tuples + " tuples");
         BufferStream(stream_id_list);
         StopStream(stream_id_list);
         RelayStream(stream_id_list, old_host_list, new_host_list);
@@ -804,16 +905,27 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
+    public String Wait(int milliseconds) {
+        try {
+            Thread.sleep(milliseconds);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return "Success";
+    }
+
+    @Override
     public void HandleSpeSpecificTask(Map<String, Object> task) {
         String cmd = (String) task.get("task");
-        if (cmd.equals("loadQueryState")) {
-            List<Object> args = (List<Object>) task.get("arguments");
-            byte[] snapshot = (byte[]) args.get(0);
-            Map<String, Object> query = (Map<String, Object>) args.get(1);
-            LoadQueryState(snapshot, query);
-            return;
-        } else {
-            throw new RuntimeException("Invalid task from mediator: " + cmd);
+        switch (cmd) {
+            case "loadQueryState": {
+                List<Object> args = (List<Object>) task.get("arguments");
+                byte[] snapshot = (byte[]) args.get(0);
+                Map<String, Object> query = (Map<String, Object>) args.get(1);
+                LoadQueryState(snapshot, query);
+                break;
+            } default:
+                throw new RuntimeException("Invalid task from mediator: " + cmd);
         }
     }
 
