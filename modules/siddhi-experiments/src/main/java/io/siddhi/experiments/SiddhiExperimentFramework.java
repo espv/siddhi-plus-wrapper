@@ -839,7 +839,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         }
         System.out.println("FlushBuffer: " + sent_buffered_tuples + " buffered tuples");
 
-        System.out.println("Incoming buffer has " + outgoingTupleBuffer.size() + " tuples in it");
+        System.out.println("Incoming buffer has " + incomingTupleBuffer.size() + " tuples in it");
         for (int i = incomingTupleBuffer.size() - 1; i >= 0; i--) {
             int buffered_tuple_stream_id = incomingTupleBuffer.get(i).getFirst();
             Event event = incomingTupleBuffer.get(i).getSecond();
@@ -893,15 +893,17 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
-    public String WaitForStoppedStreams(int node_id, List<Integer> stream_id_list) {
-        while (!stream_id_list.isEmpty()) {
-            List<Integer> stoppedStreams = nodeIdToStoppedStreams.getOrDefault(node_id, new ArrayList<>());
-            for (int i = stream_id_list.size() - 1; i >= 0; i--) {
-                int stream_id_to_stop = stream_id_list.get(i);
-                for (int stopped_stream_id : stoppedStreams) {
-                    if (stream_id_to_stop == stopped_stream_id) {
-                        // Remove from stream_id_list
-                        stream_id_list.remove(i);
+    public String WaitForStoppedStreams(List<Integer> node_id_list, List<Integer> stream_id_list) {
+        for (int node_id : node_id_list) {
+            while (!stream_id_list.isEmpty()) {
+                List<Integer> stoppedStreams = nodeIdToStoppedStreams.getOrDefault(node_id, new ArrayList<>());
+                for (int i = stream_id_list.size() - 1; i >= 0; i--) {
+                    int stream_id_to_stop = stream_id_list.get(i);
+                    for (int stopped_stream_id : stoppedStreams) {
+                        if (stream_id_to_stop == stopped_stream_id) {
+                            // Remove from stream_id_list
+                            stream_id_list.remove(i);
+                        }
                     }
                 }
             }
