@@ -60,11 +60,13 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     Map<Integer, List<Integer>> streamIdToNodeIds = new HashMap<>();
     Map<Integer, BufferedWriter> streamIdToCsvWriter = new HashMap<>();
     Map<Tuple2<Integer, Integer>, List<Integer>> streamIdAndQueryIdToSourceNodes = new HashMap<>();
+    Map<Integer, Map<Integer, List<Integer>>> queryIdToStreamIdToNodeIds = new HashMap<>();
     Map<Integer, Map<String, Object>> queryIdToMapQuery = new HashMap<>();
     List<Tuple2<Integer, Event>> incomingTupleBuffer = new ArrayList<>();
     List<Tuple2<Integer, byte[]>> outgoingTupleBuffer = new ArrayList<>();
 
-    boolean isPotentialHost = false;
+    boolean is_potential_host = false;
+    List<Integer> potential_host_stream_ids = new ArrayList<>();
 
     int port;
     int node_id;
@@ -446,7 +448,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     @Override
-    public String SetAsPotentialHost() {
+    public String SetAsPotentialHost(List<Integer> stream_id_list) {
+        this.is_potential_host = true;
+        potential_host_stream_ids = stream_id_list;
         return "Success";
     }
 
@@ -558,8 +562,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     //if (++cnt2 % 100000 == 0)
                     //System.out.println("Received event number " + (++cnt2) + ": " + event);
 
-                    if (!streamIdActive.getOrDefault(stream_id, false)) {
-                        if (streamIdBuffer.getOrDefault(stream_id, false)) {
+                    if ((is_potential_host && potential_host_stream_ids.contains(stream_id)) ||  !streamIdActive.getOrDefault(stream_id, false)) {
+                        if (potential_host_stream_ids.contains(stream_id) || streamIdBuffer.getOrDefault(stream_id, false)) {
                             incomingTupleBuffer.add(new Tuple2(stream_id, event));
                         }
                         return;
@@ -755,6 +759,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         task_args.add(snapshot);
         Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
         task_args.add(map_query);
+        Map<Integer, List<Integer>> streamIdsToNodeIds = queryIdToStreamIdToNodeIds.getOrDefault(query_id, new HashMap<>());
+        task_args.add(streamIdsToNodeIds);
         task.put("arguments", task_args);
         task.put("node", Collections.singletonList(new_host));
         speComm.speCoordinatorComm.SendToSpe(task);
@@ -771,9 +777,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String LoadQueryState(byte[] snapshot, Map<String, Object> map_query) {
+    public String LoadQueryState(byte[] snapshot, Map<String, Object> map_query, Map<Integer, List<Integer>> stream_ids_to_source_node_ids) {
         DeployQueries(map_query);
         int query_id = (int) map_query.get("id");
+        queryIdToStreamIdToNodeIds.put(query_id, stream_ids_to_source_node_ids);
         String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
         try {
             StringBuilder schemasString = new StringBuilder();
@@ -790,6 +797,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             e.printStackTrace();
             System.exit(21);
         }
+
+        ResumeStream(new ArrayList<>(stream_ids_to_source_node_ids.keySet()));
         return "Success";
     }
 
@@ -826,6 +835,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String ResumeStream(List<Integer> stream_id_list) {
+        is_potential_host = false;
+        potential_host_stream_ids.clear();
         for (int stream_id : stream_id_list) {
             streamIdActive.put(stream_id, true);
             streamIdBuffer.put(stream_id, false);
@@ -862,8 +873,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     public String BufferStopAndRelayStream(List<Integer> stream_id_list, List<Integer> old_host_list, List<Integer> new_host_list) {
         System.out.println("Sent " + actually_sent_tuples + " tuples");
         BufferStream(stream_id_list);
-        StopStream(stream_id_list);
         RelayStream(stream_id_list, old_host_list, new_host_list);
+        StopStream(stream_id_list);
         return "Success";
     }
 
@@ -891,10 +902,16 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String AddSourceNodes(int query_id, List<Integer> stream_id_list, List<Integer> node_id_list) {
-        Tuple2<Integer, Integer> key = new Tuple2(stream_id_list, query_id);
-        List<Integer> value = this.streamIdAndQueryIdToSourceNodes.getOrDefault(key, new ArrayList<>());
-        value.addAll(node_id_list);
-        streamIdAndQueryIdToSourceNodes.put(key, value);
+        if (!queryIdToStreamIdToNodeIds.containsKey(query_id)) {
+            queryIdToStreamIdToNodeIds.put(query_id, new HashMap<>());
+        }
+
+        Map<Integer, List<Integer>> streamIdsToSourceNodeIds = queryIdToStreamIdToNodeIds.get(query_id);
+        for (int stream_id : stream_id_list) {
+            List<Integer> value = streamIdsToSourceNodeIds.getOrDefault(stream_id, new ArrayList<>());
+            value.addAll(node_id_list);
+            streamIdsToSourceNodeIds.put(stream_id, value);
+        }
         return "Success";
     }
 
@@ -922,7 +939,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 List<Object> args = (List<Object>) task.get("arguments");
                 byte[] snapshot = (byte[]) args.get(0);
                 Map<String, Object> query = (Map<String, Object>) args.get(1);
-                LoadQueryState(snapshot, query);
+                Map<Integer, List<Integer>> stream_ids_to_node_ids = (Map<Integer, List<Integer>>) args.get(2);
+                LoadQueryState(snapshot, query, stream_ids_to_node_ids);
                 break;
             } default:
                 throw new RuntimeException("Invalid task from mediator: " + cmd);

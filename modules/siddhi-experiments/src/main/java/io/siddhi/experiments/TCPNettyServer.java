@@ -165,6 +165,8 @@ class TCPNettyClient {
     private Channel channel;
     private String sessionId;
     private String hostAndPort;
+    private String host;
+    private int port;
     static final int SIZE = Integer.parseInt(System.getProperty("size", "256"));
 
     public TCPNettyClient(boolean keepAlive, boolean noDelay) {
@@ -198,13 +200,16 @@ class TCPNettyClient {
     public void connect(String host, int port) throws RuntimeException {
         // Start the connection attempt.
         try {
+            this.host = host;
+            this.port = port;
             hostAndPort = host + ":" + port;
             channel = bootstrap.connect(host, port).sync().channel();
             // Strangely, channel is sometimes null when calling the send method below
-            assert channel != null;
             sessionId = UUID.randomUUID() + "-" + hostAndPort;
         } catch (Throwable e) {
-            throw new RuntimeException("Error connecting to '" + hostAndPort + "', " + e.getMessage(), e);
+            System.err.println("Error connecting to '" + hostAndPort + "', " + e.getMessage());
+            System.exit(44);
+            //throw new RuntimeException("Error connecting to '" + hostAndPort + "', " + e.getMessage(), e);
         }
     }
 
@@ -213,7 +218,9 @@ class TCPNettyClient {
         map.put("sessionId", sessionId);
         map.put("channelId", channelId);
         map.put("message", message);
-        assert channel != null;
+        if (channel == null) {
+            connect(host, port);
+        }
         ChannelFuture cf = channel.writeAndFlush(map);
         return cf;
     }
