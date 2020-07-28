@@ -50,7 +50,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     Map<Integer, List<Map<String, Object>>> datasetIdToTuples = new HashMap<>();
 
     ArrayList<Tuple3<byte[], Attribute.Type[], String>> allPackets = new ArrayList<>();
-    ArrayList<Tuple2<String, StreamCallback>> allCallbacks = new ArrayList<>();
+    Map<Integer, StreamCallback> streamIdToStreamCallbacks = new HashMap<>();
     //ArrayList<Integer> eventIDs = new ArrayList<>();
 
     SiddhiManager siddhiManager = new SiddhiManager();
@@ -62,6 +62,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     Map<Tuple2<Integer, Integer>, List<Integer>> streamIdAndQueryIdToSourceNodes = new HashMap<>();
     Map<Integer, Map<Integer, List<Integer>>> queryIdToStreamIdToNodeIds = new HashMap<>();
     Map<Integer, Map<String, Object>> queryIdToMapQuery = new HashMap<>();
+    Map<Integer, Integer> queryIdToOutputStreamId = new HashMap<>();
+    Map<Integer, List<Integer>> nodeIdToStoppedStreams = new HashMap<>();
     List<Tuple2<Integer, Event>> incomingTupleBuffer = new ArrayList<>();
     List<Tuple2<Integer, byte[]>> outgoingTupleBuffer = new ArrayList<>();
 
@@ -568,7 +570,21 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                         }
                         return;
                     }
-                    ProcessTuple(stream_id, finalStreamDefinition.getId(), event);
+
+                    if (stream_id == 0) {
+                        String raw_stream_id_list = (String) event.getData()[0];
+                        List<Integer> stream_id_list = new ArrayList<>();
+                        for (String string_stream_id : raw_stream_id_list.split(", ")) {
+                            stream_id_list.add(Integer.parseInt(string_stream_id));
+                        }
+                        int sending_node_id = (int) event.getData()[1];
+                        if (!nodeIdToStoppedStreams.containsKey(sending_node_id)) {
+                            nodeIdToStoppedStreams.put(sending_node_id, new ArrayList<>());
+                        }
+                        nodeIdToStoppedStreams.get(sending_node_id).addAll(stream_id_list);
+                    } else {
+                        ProcessTuple(stream_id, finalStreamDefinition.getId(), event);
+                    }
                 }
             };
 
@@ -593,7 +609,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     }
                 }
             };
-            allCallbacks.add(new Tuple2<>(stream_name, sc));
+            streamIdToStreamCallbacks.put(stream_id, sc);
         }
 
         StartSiddhiAppRuntime();
@@ -609,19 +625,21 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
             String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
             queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
-            for (Tuple2<String, StreamCallback> t : allCallbacks) {
-                queryIdToSiddhiAppRuntime.get(query_id).addCallback(t.getFirst(), t.getSecond());
-            }
+
+            int output_stream_id = queryIdToOutputStreamId.get(query_id);
+            String output_stream_name = streamIdToName.get(output_stream_id);
+            queryIdToSiddhiAppRuntime.get(query_id).addCallback(output_stream_name, streamIdToStreamCallbacks.get(output_stream_id));
             queryIdToSiddhiAppRuntime.get(query_id).start();
         }
 
-        if (queryIdToSiddhiAppRuntime.isEmpty()) {
+        /*if (queryIdToSiddhiAppRuntime.isEmpty()) {
             siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(schemasString.toString());
-            for (Tuple2<String, StreamCallback> t : allCallbacks) {
-                siddhiAppRuntime.addCallback(t.getFirst(), t.getSecond());
+            for (int stream_id : streamIdToStreamCallbacks.keySet()) {
+                String stream_name = streamIdToName.get(stream_id);
+                siddhiAppRuntime.addCallback(stream_name, streamIdToStreamCallbacks.get(stream_id));
             }
             siddhiAppRuntime.start();
-        }
+        }*/
     }
 
     @Override
@@ -631,6 +649,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             return "Empty query";
         }
         int query_id = (int) map_query.get("id");
+        int output_stream_id = (int) map_query.get("output-stream-id");
+        queryIdToOutputStreamId.put(query_id, output_stream_id);
         queryIdToMapQuery.put(query_id, map_query);
         //for (int i = 0; i < quantity; i++) {
         tf.traceEvent(221, new Object[]{query_id});
@@ -788,9 +808,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 schemasString.append(siddhiSchema);
             }
             queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
-            for (Tuple2<String, StreamCallback> t : allCallbacks) {
-                queryIdToSiddhiAppRuntime.get(query_id).addCallback(t.getFirst(), t.getSecond());
-            }
+            int output_stream_id = queryIdToOutputStreamId.get(query_id);
+            String output_stream_name = streamIdToName.get(output_stream_id);
+            queryIdToSiddhiAppRuntime.get(query_id).addCallback(output_stream_name, streamIdToStreamCallbacks.get(output_stream_id));
             queryIdToSiddhiAppRuntime.get(query_id).start();
             queryIdToSiddhiAppRuntime.get(query_id).restore(snapshot);
         } catch (CannotRestoreSiddhiAppStateException e) {
@@ -850,6 +870,41 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     public String StopStream(List<Integer> stream_id_list) {
         for (int stream_id : stream_id_list) {
             streamIdActive.put(stream_id, false);
+        }
+        // Send tuple to the node currently sending the task
+        int coordinator_node_id = speComm.GetNodeIdOfCurrentCoordinator();
+
+        // Node 0 is the coordinator
+        if (coordinator_node_id != 0) {
+            streamIdToNodeIds.put(0, Arrays.asList(coordinator_node_id));
+            StringBuilder raw_stream_id_list = new StringBuilder();
+            for (int stream_id : stream_id_list) {
+                raw_stream_id_list.append(stream_id);
+                if (stream_id != stream_id_list.get(stream_id_list.size() - 1)) {
+                    raw_stream_id_list.append(", ");
+                }
+            }
+            Attribute.Type[] streamTypes = (Attribute.Type[]) allSchemas.get(0).get("stream-type");
+            Event event = new Event(System.currentTimeMillis(), new Object[]{raw_stream_id_list.toString(), node_id});
+            PrepareToSendTuple(0, streamTypes, event);
+            streamIdToNodeIds.remove(0);
+        }
+        return "Success";
+    }
+
+    @Override
+    public String WaitForStoppedStreams(int node_id, List<Integer> stream_id_list) {
+        while (!stream_id_list.isEmpty()) {
+            List<Integer> stoppedStreams = nodeIdToStoppedStreams.getOrDefault(node_id, new ArrayList<>());
+            for (int i = stream_id_list.size() - 1; i >= 0; i--) {
+                int stream_id_to_stop = stream_id_list.get(i);
+                for (int stopped_stream_id : stoppedStreams) {
+                    if (stream_id_to_stop == stopped_stream_id) {
+                        // Remove from stream_id_list
+                        stream_id_list.remove(i);
+                    }
+                }
+            }
         }
         return "Success";
     }
