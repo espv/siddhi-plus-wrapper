@@ -564,7 +564,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     //if (++cnt2 % 100000 == 0)
                     //System.out.println("Received event number " + (++cnt2) + ": " + event);
 
-                    if ((is_potential_host && potential_host_stream_ids.contains(stream_id)) ||  !streamIdActive.getOrDefault(stream_id, false)) {
+                    if ((is_potential_host && potential_host_stream_ids.contains(stream_id)) ||  !streamIdActive.getOrDefault(stream_id, true)) {
                         if (potential_host_stream_ids.contains(stream_id) || streamIdBuffer.getOrDefault(stream_id, false)) {
                             incomingTupleBuffer.add(new Tuple2(stream_id, event));
                         }
@@ -798,6 +798,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     public String LoadQueryState(byte[] snapshot, Map<String, Object> map_query, Map<Integer, List<Integer>> stream_ids_to_source_node_ids) {
+        is_potential_host = false;
         DeployQueries(map_query);
         int query_id = (int) map_query.get("id");
         queryIdToStreamIdToNodeIds.put(query_id, stream_ids_to_source_node_ids);
