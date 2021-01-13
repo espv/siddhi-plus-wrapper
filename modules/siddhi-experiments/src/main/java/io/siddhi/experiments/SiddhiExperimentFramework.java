@@ -17,19 +17,16 @@ import org.wso2.extension.siddhi.map.binary.sinkmapper.BinaryEventConverter;
 import org.wso2.extension.siddhi.map.binary.sourcemapper.SiddhiEventConverter;
 import org.wso2.extension.siddhi.map.binary.utils.EventDefinitionConverterUtil;
 import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.Constructor;
-import org.yaml.snakeyaml.introspector.PropertyUtils;
-import org.yaml.snakeyaml.representer.Representer;
 
 import java.io.*;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 
-import static com.google.common.primitives.Longs.min;
-import static io.siddhi.core.util.statistics.metrics.Level.DETAIL;
 import static java.lang.Math.abs;
 
 @SuppressWarnings("unchecked")
@@ -92,6 +89,16 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     private String trace_output_folder;
 
     boolean execution_locked = false;
+
+    ServerSocket state_transfer_server = null;
+
+    public void setupStateTransferServer(int state_transfer_port) {
+        try {
+            state_transfer_server = new ServerSocket(state_transfer_port);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
     //@Override
     public String SetupClientTcpServer(int port) {
@@ -935,7 +942,8 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         for (int query_id : queryIdToMapQuery.keySet()) {
             Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
             String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
-            queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
+            String schemas_and_query = schemasString.toString() + "\n" + query;
+            queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemas_and_query));
 
             int output_stream_id = queryIdToOutputStreamId.get(query_id);
             String output_stream_name = streamIdToName.get(output_stream_id);
@@ -1079,6 +1087,33 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         long ms_start = System.currentTimeMillis();
         byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
 
+        new Thread(() -> {
+            // Begin to set up state transfer connection
+            String ip = (String) this.nodeIdToIpAndPort.get(new_host).get("ip");
+            int new_host_state_transfer_port = (int) this.nodeIdToIpAndPort.get(new_host).get("state-transfer-port");
+            Socket clientSocket = null;
+            try {
+                clientSocket = new Socket(ip, new_host_state_transfer_port);
+            } catch (IOException e) {
+                e.printStackTrace();
+                System.exit(100);
+            }
+            OutputStream out = null;
+            try {
+                out = clientSocket.getOutputStream();
+            } catch (IOException e) {
+                e.printStackTrace();
+                System.exit(101);
+            }
+            try {
+                out.write(snapshot);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }).start();
+        // Now we have sent the snapshot to the new host
+        // The new host will receive in the task how many bytes it must receive on its socket
+
         // If tuples are currently being processed, the snapshot will contain them.
         // If a new tuple is received between the snapshot is received above and the
         // runtime environment is shut down below, there is a lock that prevents a conflict
@@ -1091,7 +1126,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         Map<String, Object> task = new HashMap<>();
         task.put("task", "loadQueryState");
         List<Object> task_args = new ArrayList<>();
-        task_args.add(snapshot);
+        task_args.add(snapshot.length);
         Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
         task_args.add(map_query);
         Map<Integer, List<Integer>> streamIdsToNodeIds = queryIdToStreamIdToNodeIds.getOrDefault(query_id, new HashMap<>());
@@ -1115,14 +1150,31 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String LoadQueryState(byte[] snapshot, Map<String, Object> map_query, Map<Integer, List<Integer>> stream_ids_to_source_node_ids) {
-        System.out.println("Receiving query state with " + snapshot.length + " bytes");
+    public String LoadQueryState(int snapshot_length, Map<String, Object> map_query, Map<Integer, List<Integer>> stream_ids_to_source_node_ids) {
+        System.out.println("Receiving query state with " + snapshot_length + " bytes");
         long ms_start = System.currentTimeMillis();
         is_potential_host = false;
         DeployQueries(map_query);
         int query_id = (int) map_query.get("id");
         queryIdToStreamIdToNodeIds.put(query_id, stream_ids_to_source_node_ids);
         String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
+
+        Socket client_socket = null;
+        try {
+            client_socket = state_transfer_server.accept();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(102);
+        }
+
+        byte[] snapshot = new byte[snapshot_length];
+        try {
+            new DataInputStream(client_socket.getInputStream()).readFully(snapshot);
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(103);
+        }
+
         try {
             StringBuilder schemasString = new StringBuilder();
             for (String siddhiSchema : siddhiSchemas.values()) {
@@ -1386,10 +1438,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         switch (cmd) {
             case "loadQueryState": {
                 List<Object> args = (List<Object>) task.get("arguments");
-                byte[] snapshot = (byte[]) args.get(0);
+                int snapshot_length = (int) args.get(0);
                 Map<String, Object> query = (Map<String, Object>) args.get(1);
                 Map<Integer, List<Integer>> stream_ids_to_node_ids = (Map<Integer, List<Integer>>) args.get(2);
-                LoadQueryState(snapshot, query, stream_ids_to_node_ids);
+                LoadQueryState(snapshot_length, query, stream_ids_to_node_ids);
                 break;
             } default:
                 throw new RuntimeException("Invalid task from mediator: " + cmd);
@@ -1405,6 +1457,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             siddhiExperimentFramework.SetNodeId(speComm.GetNodeId());
             siddhiExperimentFramework.SetupClientTcpServer(speComm.GetClientPort());
             siddhiExperimentFramework.SetTraceOutputFolder(speComm.GetTraceOutputFolder());
+            int state_transfer_port = speComm.GetStateTransferPort();
+            if (state_transfer_port != -1) {
+                siddhiExperimentFramework.setupStateTransferServer(state_transfer_port);
+            }
             //speComm.AcceptTasks();
             while (continue_running);
             siddhiExperimentFramework.TearDownTcpServer();
