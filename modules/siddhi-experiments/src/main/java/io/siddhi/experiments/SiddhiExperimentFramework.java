@@ -879,12 +879,12 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                     }
                     timeLastRecvdTuple = System.currentTimeMillis();
                     received_tuples++;
-                    //if (++cnt2 % 100000 == 0)
-                    //System.out.println("Received event number " + (++cnt2) + ": " + event);
+                    if (++cnt2 % 10000 == 0)
+                        System.out.println("Received event number " + (++cnt2) + ": " + event);
 
                     if ((is_potential_host && potential_host_stream_ids.contains(stream_id)) ||  !streamIdActive.getOrDefault(stream_id, true)) {
                         if (potential_host_stream_ids.contains(stream_id) || streamIdBuffer.getOrDefault(stream_id, false)) {
-                            incomingTupleBuffer.add(new Tuple2(stream_id, event));
+                            incomingTupleBuffer.add(new Tuple2<>(stream_id, event));
                         }
                         return;
                     }
@@ -1082,10 +1082,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    @Override
-    public String MoveQueryState(int query_id, int new_host) {
+    public String MoveQueryState(int new_host) {
         long ms_start = System.currentTimeMillis();
-        byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
+        Map<Integer, byte[]> queryIdToSnapshot = new HashMap<>();
+        Map<Integer, Integer> queryIdToSnapshotLengths = new HashMap<>();
 
         new Thread(() -> {
             // Begin to set up state transfer connection
@@ -1105,14 +1105,86 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 e.printStackTrace();
                 System.exit(101);
             }
+            for (int qid : queryIdToSiddhiAppRuntime.keySet()) {
+                long ms_start_tcp = System.currentTimeMillis();
+                while (!queryIdToSnapshot.containsKey(qid)) {
+                    Thread.yield();
+                }
+                try {
+                    out.write(queryIdToSnapshot.get(qid));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
+                long ms_stop_tcp = System.currentTimeMillis();
+                System.out.println("Writing the state of Query " + qid + " to the socket took " + (ms_stop_tcp - ms_start_tcp) + "ms");
+                // Now we have sent the snapshot to the new host
+                // The new host will receive in the task how many bytes it must receive on its socket
+            }
+        }).start();
+        for (int query_id : queryIdToSiddhiAppRuntime.keySet()) {
+            byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
+            queryIdToSnapshot.put(query_id, snapshot);
+            queryIdToSnapshotLengths.put(query_id, snapshot.length);
+
+            queryIdToSiddhiAppRuntime.get(query_id).shutdown();
+        }
+
+        // If tuples are currently being processed, the snapshot will contain them.
+        // If a new tuple is received between the snapshot is received above and the
+        // runtime environment is shut down below, there is a lock that prevents a conflict
+        // from occurring. The lock currently has flaws that need to be fixed.
+        Map<String, Object> task = new HashMap<>();
+        task.put("task", "loadQueryState2");
+        List<Object> task_args = new ArrayList<>();
+        task_args.add(queryIdToSnapshotLengths);
+        task_args.add(queryIdToMapQuery);
+        task_args.add(queryIdToStreamIdToNodeIds);
+        task.put("arguments", task_args);
+        task.put("node", Collections.singletonList(new_host));
+        long ms_stop1 = System.currentTimeMillis();
+        speComm.speNodeComm.SendToSpe(task);
+        long ms_stop2 = System.currentTimeMillis();
+        System.out.println("Preparing state took " + (ms_stop1 - ms_start) + "ms, and in addition to sending it took " + (ms_stop2 - ms_start) + "ms");
+        queryIdToSiddhiAppRuntime.clear();
+        return "Success";
+    }
+
+    public String MoveQueryState(int query_id, int new_host) {
+        long ms_start = System.currentTimeMillis();
+        byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
+
+        byte[] finalSnapshot = snapshot;
+        new Thread(() -> {
+            long ms_start_tcp = System.currentTimeMillis();
+            // Begin to set up state transfer connection
+            String ip = (String) this.nodeIdToIpAndPort.get(new_host).get("ip");
+            int new_host_state_transfer_port = (int) this.nodeIdToIpAndPort.get(new_host).get("state-transfer-port");
+            Socket clientSocket = null;
             try {
-                out.write(snapshot);
+                clientSocket = new Socket(ip, new_host_state_transfer_port);
+            } catch (IOException e) {
+                e.printStackTrace();
+                System.exit(100);
+            }
+            OutputStream out = null;
+            try {
+                out = clientSocket.getOutputStream();
+            } catch (IOException e) {
+                e.printStackTrace();
+                System.exit(101);
+            }
+            try {
+                out.write(finalSnapshot);
             } catch (IOException e) {
                 e.printStackTrace();
             }
+
+            long ms_stop_tcp = System.currentTimeMillis();
+            System.out.println("Writing the state to the socket took " + (ms_stop_tcp-ms_start_tcp) + "ms");
+            // Now we have sent the snapshot to the new host
+            // The new host will receive in the task how many bytes it must receive on its socket
         }).start();
-        // Now we have sent the snapshot to the new host
-        // The new host will receive in the task how many bytes it must receive on its socket
 
         // If tuples are currently being processed, the snapshot will contain them.
         // If a new tuple is received between the snapshot is received above and the
@@ -1150,6 +1222,69 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
+    public String LoadQueryState2(Map<Integer, Integer> queryIdToSnapshotLengths, Map<Integer, Map<String, Object>> queryIdToMapQuery, Map<Integer, Map<Integer, List<Integer>>> queryIdToStreamIdToNodeIds) {
+        //System.out.println("Receiving query state with " + snapshot_length + " bytes");
+        long ms_start = System.currentTimeMillis();
+        is_potential_host = false;
+        int all_snapshots_length = 0;
+        for (int snapshot_size : queryIdToSnapshotLengths.values()) {
+            all_snapshots_length += snapshot_size;
+        }
+        byte[] allSnapshots = new byte[all_snapshots_length];
+        long ms_start_tcp = System.currentTimeMillis();
+        Socket client_socket = null;
+        try {
+            client_socket = state_transfer_server.accept();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(102);
+        }
+        try {
+            new DataInputStream(client_socket.getInputStream()).readFully(allSnapshots);
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(103);
+        }
+        int all_snapshot_index = 0;
+        for (int query_id : queryIdToMapQuery.keySet()) {
+            Map<String, Object> map_query = queryIdToMapQuery.get(query_id);
+            DeployQueries(map_query);
+            queryIdToStreamIdToNodeIds.put(query_id, queryIdToStreamIdToNodeIds.get(query_id));
+            String query = (String) ((Map<String, Object>) map_query.get("sql-query")).get("siddhi");
+
+            long ms_stop_tcp = System.currentTimeMillis();
+            System.out.println("Reading the state from the socket took " + (ms_stop_tcp-ms_start_tcp) + "ms");
+
+            int snapshot_size = queryIdToSnapshotLengths.get(query_id);
+            byte[] snapshot = new byte[snapshot_size];
+            for (int i = 0; i < snapshot_size; i++) {
+                snapshot[i] = allSnapshots[all_snapshot_index++];
+            }
+
+            try {
+                StringBuilder schemasString = new StringBuilder();
+                for (String siddhiSchema : siddhiSchemas.values()) {
+                    schemasString.append(siddhiSchema);
+                }
+                queryIdToSiddhiAppRuntime.put(query_id, siddhiManager.createSiddhiAppRuntime(schemasString.toString() + "\n" + query));
+                int output_stream_id = queryIdToOutputStreamId.get(query_id);
+                String output_stream_name = streamIdToName.get(output_stream_id);
+                queryIdToSiddhiAppRuntime.get(query_id).addCallback(output_stream_name, streamIdToStreamCallbacks.get(output_stream_id));
+                queryIdToSiddhiAppRuntime.get(query_id).start();
+                //queryIdToSiddhiAppRuntime.get(query_id).setStatisticsLevel(DETAIL);
+                queryIdToSiddhiAppRuntime.get(query_id).restore(snapshot);
+            } catch (CannotRestoreSiddhiAppStateException e) {
+                e.printStackTrace();
+                System.exit(21);
+            }
+
+            ResumeStream(new ArrayList<>(queryIdToStreamIdToNodeIds.get(query_id).keySet()));
+        }
+        long ms_stop = System.currentTimeMillis();
+        System.out.println("Loading the state took " + (ms_stop - ms_start) + " ms");
+        return "Success";
+    }
+
     public String LoadQueryState(int snapshot_length, Map<String, Object> map_query, Map<Integer, List<Integer>> stream_ids_to_source_node_ids) {
         System.out.println("Receiving query state with " + snapshot_length + " bytes");
         long ms_start = System.currentTimeMillis();
@@ -1168,12 +1303,16 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         }
 
         byte[] snapshot = new byte[snapshot_length];
+        long ms_start_tcp = System.currentTimeMillis();
         try {
             new DataInputStream(client_socket.getInputStream()).readFully(snapshot);
         } catch (IOException e) {
             e.printStackTrace();
             System.exit(103);
         }
+        long ms_stop_tcp = System.currentTimeMillis();
+        System.out.println("Reading the state from the socket took " + (ms_stop_tcp-ms_start_tcp) + "ms");
+
 
         try {
             StringBuilder schemasString = new StringBuilder();
@@ -1192,10 +1331,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             System.exit(21);
         }
 
-        long ms_stop1 = System.currentTimeMillis();
         ResumeStream(new ArrayList<>(stream_ids_to_source_node_ids.keySet()));
-        long ms_stop2 = System.currentTimeMillis();
-        System.out.println("Loading the state took " + (ms_stop1 - ms_start) + ", and in addition to resuming the streams took " + (ms_stop2 - ms_start) + "ms");
+        long ms_stop = System.currentTimeMillis();
+        System.out.println("Loading the state took " + (ms_stop - ms_start) + " ms");
         return "Success";
     }
 
@@ -1443,7 +1581,15 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 Map<Integer, List<Integer>> stream_ids_to_node_ids = (Map<Integer, List<Integer>>) args.get(2);
                 LoadQueryState(snapshot_length, query, stream_ids_to_node_ids);
                 break;
-            } default:
+            }
+            case "loadQueryState2": {
+                List<Object> args = (List<Object>) task.get("arguments");
+                Map<Integer, Integer> queryIdToSnapshotLengths = (Map<Integer, Integer>) args.get(0);
+                Map<Integer, Map<String, Object>> queryIdToMapQueries = (Map<Integer, Map<String, Object>>) args.get(1);
+                Map<Integer, Map<Integer, List<Integer>>> queryIdToStreamIdsToNodeIds = (Map<Integer, Map<Integer, List<Integer>>>) args.get(2);
+                LoadQueryState2(queryIdToSnapshotLengths, queryIdToMapQueries, queryIdToStreamIdsToNodeIds);
+                break;
+            }default:
                 throw new RuntimeException("Invalid task from mediator: " + cmd);
         }
     }
