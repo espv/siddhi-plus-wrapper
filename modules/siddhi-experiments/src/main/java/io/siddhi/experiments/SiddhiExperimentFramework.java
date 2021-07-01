@@ -149,6 +149,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         for (SiddhiAppRuntime runtime : queryIdToSiddhiAppRuntime.values()) {
             runtime.shutdown();
         }
+        System.out.println("Stopping runtime after receiving " + received_tuples + " tuples and produced " + actually_sent_tuples);
         tf.writeTraceToFile(this.trace_output_folder, this.getClass().getSimpleName());
         return "Success";
     }
@@ -1117,7 +1118,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 }
 
                 long ms_stop_tcp = System.currentTimeMillis();
-                System.out.println("Writing the state of Query " + qid + " to the socket took " + (ms_stop_tcp - ms_start_tcp) + "ms");
+                System.out.println("Writing the state of Query " + qid + " of size " + queryIdToSnapshotLengths.get(qid) + " bytes to the socket took " + (ms_stop_tcp - ms_start_tcp) + "ms");
                 // Now we have sent the snapshot to the new host
                 // The new host will receive in the task how many bytes it must receive on its socket
             }
@@ -1219,6 +1220,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String MoveDynamicQueryState(int query_id, int new_host) {
+        MoveQueryState(query_id, new_host);
         return "Success";
     }
 
