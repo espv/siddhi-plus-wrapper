@@ -498,16 +498,16 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             tuples = raw_tuples;
         }
 
+        for (Map<String, Object> tuple : tuples) {
+            AddTuples(tuple, 1);
+        }
         for (int i = 0; i < iterations; i++) {
-            for (Map<String, Object> tuple : tuples) {
-                AddTuples(tuple, 1);
-            }
+            SendTuples(allPackets.size());
         }
 
         //new Thread(() -> SendTuplesVariableOnOff(Integer.MAX_VALUE, 0, Integer.MAX_VALUE-1, Integer.MAX_VALUE, 0)).start();
         //boolean cont = true;
         //while (cont);
-        SendTuples(allPackets.size());
         allPackets.clear();
         return "Success";
     }
