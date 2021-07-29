@@ -44,6 +44,7 @@
         <module>modules/siddhi-doc-gen</module>
         <module>modules/siddhi-core/siddhi-core-doc-gen</module>
         <module>modules/siddhi-feature</module>
+        <module>modules/siddhi-experiments</module>
         <module>coverage-reports</module>
     </modules>
 
