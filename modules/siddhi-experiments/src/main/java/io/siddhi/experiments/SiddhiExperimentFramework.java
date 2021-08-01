@@ -555,12 +555,14 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
 
     @Override
     public String AddNextHop(List<Integer> streamId_list, List<Integer> nodeId_list) {
-        for (int streamId : streamId_list) {
-            if (!streamIdToNodeIds.containsKey(streamId)) {
-                streamIdToNodeIds.put(streamId, new ArrayList<>());
-            }
-            for (int nodeId : nodeId_list) {
-                streamIdToNodeIds.get(streamId).add(nodeId);
+        synchronized(streamIdToNodeIds) {
+            for (int streamId : streamId_list) {
+                if (!streamIdToNodeIds.containsKey(streamId)) {
+                    streamIdToNodeIds.put(streamId, new ArrayList<>());
+                }
+                for (int nodeId : nodeId_list) {
+                    streamIdToNodeIds.get(streamId).add(nodeId);
+                }
             }
         }
         for (int nodeId : nodeId_list) {
@@ -710,7 +712,10 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     public void SendTuple(int stream_id, byte[] serialized_tuple) {
         String stream_name = streamIdToName.get(stream_id);
         if (streamIdToNodeIds.containsKey(stream_id)) {
-            List<Integer> node_ids = streamIdToNodeIds.get(stream_id);
+            List<Integer> node_ids;
+            synchronized (streamIdToNodeIds) {
+                node_ids = new ArrayList<>(streamIdToNodeIds.get(stream_id));
+            }
             for (int i = 0; i < node_ids.size(); i++) {
                 int nodeId = node_ids.get(i);
                 TCPNettyClient tcpNettyClient = nodeIdToClient.get(nodeId);
