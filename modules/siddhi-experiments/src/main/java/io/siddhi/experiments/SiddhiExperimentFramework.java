@@ -1205,7 +1205,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             }
 
             long ms_stop_tcp = System.currentTimeMillis();
-            System.out.println("Writing the state to the socket took " + (ms_stop_tcp-ms_start_tcp) + "ms");
+            System.out.println("Sending the state to the socket took " + (ms_stop_tcp-ms_start_tcp) + "ms");
             // Now we have sent the snapshot to the new host
             // The new host will receive in the task how many bytes it must receive on its socket
         }).start();
@@ -1229,10 +1229,9 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         task_args.add(streamIdsToNodeIds);
         task.put("arguments", task_args);
         task.put("node", Collections.singletonList(new_host));
-        long ms_stop1 = System.currentTimeMillis();
         speComm.speNodeComm.SendToSpe(task);
-        long ms_stop2 = System.currentTimeMillis();
-        System.out.println("Preparing state took " + (ms_stop1-ms_start) + "ms, and in addition to sending it took " + (ms_stop2-ms_start) + "ms");
+        long ms_stop = System.currentTimeMillis();
+        System.out.println("Preparing state took " + (ms_stop-ms_start) + "ms");
         return "Success";
     }
 
