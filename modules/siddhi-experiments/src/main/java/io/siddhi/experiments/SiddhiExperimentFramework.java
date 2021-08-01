@@ -166,7 +166,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String AddTuples(Map<String, Object> tuple, int quantity) {
+    public String AddTuples(Map<String, Object> tuple, int quantity, ArrayList<Tuple3<byte[], Attribute.Type[], String>> tupleList) {
         int stream_id = (int) tuple.get("stream-id");
         Map<String, Object> schema = allSchemas.get(stream_id);
         String stream_name = (String) schema.get("name");
@@ -184,7 +184,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                 tf.traceEvent(220, new Object[]{/*event_id*/});
                 Event[] events = new Event[1];
                 events[0] = new Event(System.currentTimeMillis(), siddhi_attributes);
-                allPackets.add(new Tuple3<>(BinaryEventConverter.convertToBinaryMessage(events, streamType).array(), streamType, stream_name));
+                tupleList.add(new Tuple3<>(BinaryEventConverter.convertToBinaryMessage(events, streamType).array(), streamType, stream_name));
                 //eventIDs.add(event_id);
             }
         } catch (IOException e) {
@@ -221,14 +221,14 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
      * @param max
      * @param step
      */
-    public void SendTuplesVariableOnOff(int desired_tuples_per_second, int downtime, int min, int max, int step) {
+    public void SendTuplesVariableOnOff(ArrayList<Tuple3<byte[], Attribute.Type[], String>> tuplesToSend, int desired_tuples_per_second, int downtime, int min, int max, int step) {
         long desired_ns_between_tuples = (int) ((1.0/desired_tuples_per_second) * 1000000000);
         //System.out.println("SendTuplesVariableOnOff: Node " + to_node + ", desired ns tuple interval: " + desired_ns_between_tuples + ", actual ns tuple interval: " + this.nodeIdToTupleInterval.get(to_node));
         Random r = new Random();
         Map<Integer, Double> node_to_actual_tuples_per_second = new HashMap<>();
         Map<Integer, Double> node_to_drop_probability = new HashMap<>();
 
-        if (allPackets.isEmpty()) {
+        if (tuplesToSend.isEmpty()) {
             System.out.println("No tuples to process");
         }
         long last_sent = 0;
@@ -264,7 +264,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             double desired_total_packets = (desired_tuples_per_second * (current_on/1000.0));
             //double actual_total_packets = (actual_tuples_per_second * (current_on/1000.0));
             //double drop_probability = 100 * (1 - actual_total_packets/desired_total_packets);
-            if (allPackets.isEmpty()) {
+            if (tuplesToSend.isEmpty()) {
                 break;
             }
 
@@ -282,7 +282,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             // I should really add to which node I want to send the dataset
             //
             for (int curPktsPublished = 1; curPktsPublished <= desired_total_packets; curPktsPublished++) {
-                Tuple3<byte[], Attribute.Type[], String> t = allPackets.get(curPktsPublished % allPackets.size());
+                Tuple3<byte[], Attribute.Type[], String> t = tuplesToSend.get(curPktsPublished % tuplesToSend.size());
                 ++pktsPublished;
                 if (pktsPublished % 10000 == 0) {
                     System.out.println("SendTuples: " + pktsPublished + " tuples");
@@ -417,14 +417,15 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             tuples = raw_tuples;
         }
 
+        ArrayList<Tuple3<byte[], Attribute.Type[], String>> tuplesToSend = new ArrayList<>();
         for (Map<String, Object> tuple : tuples) {
-            AddTuples(tuple, 1);
+            AddTuples(tuple, 1, tuplesToSend);
         }
 
-        new Thread(() -> SendTuplesVariableOnOff(desired_tuples_per_second, downtime, min, max, step)).start();
+        new Thread(() -> SendTuplesVariableOnOff(tuplesToSend, desired_tuples_per_second, downtime, min, max, step)).start();
         boolean cont = true;
         while (cont);
-        allPackets.clear();
+        tuplesToSend.clear();
         return "Success";
     }
 
@@ -460,11 +461,12 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             tuples = raw_tuples;
         }
 
+        ArrayList<Tuple3<byte[], Attribute.Type[], String>> tuplesToSend = new ArrayList<>();
         for (Map<String, Object> tuple : tuples) {
-            AddTuples(tuple, 1);
+            AddTuples(tuple, 1, tuplesToSend);
         }
 
-        new Thread(() -> SendTuplesVariableOnOff(desired_tuples_per_second, 0, Integer.MAX_VALUE-1, Integer.MAX_VALUE, 0)).start();
+        new Thread(() -> SendTuplesVariableOnOff(tuplesToSend, desired_tuples_per_second, 0, Integer.MAX_VALUE-1, Integer.MAX_VALUE, 0)).start();
         boolean cont = true;
         while (cont);
         return "Success";
@@ -498,17 +500,18 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
             tuples = raw_tuples;
         }
 
+        ArrayList<Tuple3<byte[], Attribute.Type[], String>> tuplesToSend = new ArrayList<>();
         for (Map<String, Object> tuple : tuples) {
-            AddTuples(tuple, 1);
+            AddTuples(tuple, 1, tuplesToSend);
         }
         for (int i = 0; i < iterations; i++) {
-            SendTuples(allPackets.size());
+            SendTuples(tuplesToSend);
         }
 
         //new Thread(() -> SendTuplesVariableOnOff(Integer.MAX_VALUE, 0, Integer.MAX_VALUE-1, Integer.MAX_VALUE, 0)).start();
         //boolean cont = true;
         //while (cont);
-        allPackets.clear();
+        tuplesToSend.clear();
         return "Success";
     }
 
@@ -992,22 +995,22 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
         return "Success";
     }
 
-    public String SendTuples(int number_tuples) {
+    public String SendTuples(ArrayList<Tuple3<byte[], Attribute.Type[], String>> tuplesToSend) {
         // TODO: Add to send_schedule
+        int number_tuples = tuplesToSend.size();
         System.out.println("Sending " + number_tuples + " tuples");
-        if (allPackets.isEmpty()) {
+        if (tuplesToSend.isEmpty()) {
             System.out.println("No tuples to process");
         }
 
         long startTime = System.nanoTime();
         Map<Integer, Integer> nodesToNumberSent = new HashMap<>();
-        while (pktsPublished < number_tuples) {
-            if (allPackets.isEmpty()) {
+        for (int i = 0; i < tuplesToSend.size(); i++) {
+            if (tuplesToSend.isEmpty()) {
                 break;
             }
 
-            int curPktsPublished = pktsPublished;
-            Tuple3<byte[], Attribute.Type[], String> t = allPackets.get(curPktsPublished % allPackets.size());
+            Tuple3<byte[], Attribute.Type[], String> t = tuplesToSend.get(i);
             ++pktsPublished;
             if (pktsPublished % 10000 == 0) {
                 System.out.println("SendTuples: " + pktsPublished + " tuples");
