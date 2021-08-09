@@ -89,6 +89,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     private String trace_output_folder;
 
     boolean execution_locked = false;
+    boolean migration_in_progress = false;
 
     ServerSocket state_transfer_server = null;
 
@@ -916,7 +917,12 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
                         }
                         nodeIdToStoppedStreams.get(sending_node_id).addAll(stream_id_list);
                     } else {
-                        ProcessTuple(stream_id, finalStreamDefinition.getId(), event);
+                        if (migration_in_progress) {
+                            // Forward tuples
+                            PrepareToSendTuple(stream_id, streamTypes, event);
+                        } else {
+                            ProcessTuple(stream_id, finalStreamDefinition.getId(), event);
+                        }
                     }
                 }
             };
@@ -1175,6 +1181,7 @@ public class SiddhiExperimentFramework implements ExperimentAPI, SpeSpecificAPI 
     }
 
     public String MoveQueryState(int query_id, int new_host) {
+        migration_in_progress = true;
         long ms_start = System.currentTimeMillis();
         byte[] snapshot = queryIdToSiddhiAppRuntime.get(query_id).snapshot();
 
